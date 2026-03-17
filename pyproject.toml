@@ -28,7 +28,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
@@ -58,6 +57,10 @@ dev = [
 openai = ["openai>=1.0.0"]
 hf = ["huggingface_hub>=0.20.0"]
 modelscope = ["modelscope>=1.10.0"]
+metal = []
+cuda = []
+vulkan = []
+cpu = []
 all = [
     "openai>=1.0.0",
     "huggingface_hub>=0.20.0",
@@ -66,6 +69,7 @@ all = [
 
 [project.scripts]
 moxing = "moxing.cli:app"
+moxing-download = "moxing.post_install:main"
 
 [project.urls]
 Homepage = "https://github.com/cycleuser/MoXing"

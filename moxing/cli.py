@@ -1,5 +1,5 @@
 """
-CLI interface for pyllm
+CLI interface for moxing
 """
 
 import os
@@ -17,7 +17,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt, IntPrompt
 
 console = Console()
-app = typer.Typer(name="pyllm", help="Python wrapper for llama.cpp server")
+app = typer.Typer(name="moxing", help="Python wrapper for llama.cpp server")
 
 
 @app.command()
@@ -50,7 +50,7 @@ def serve(
             f"[green]Server running at:[/green] http://{host}:{port}\n"
             f"[blue]OpenAI API:[/blue] http://{host}:{port}/v1\n"
             f"[yellow]Press Ctrl+C to stop[/yellow]",
-            title="pyllm server"
+            title="moxing server"
         ))
         
         server.start(wait=False)
@@ -439,7 +439,7 @@ def diagnose(
             if install:
                 console.print("\n[blue]Starting automatic installation...[/blue]")
                 import subprocess
-                subprocess.run([sys.executable, "-m", "pip", "install", "pyllm-server"])
+                subprocess.run([sys.executable, "-m", "pip", "install", "moxing"])
         return
     
     cmd = [sys.executable, str(script_path)]

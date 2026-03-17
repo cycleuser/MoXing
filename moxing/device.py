@@ -115,7 +115,7 @@ class DeviceDetector:
                             backend = BackendType.CUDA
                         elif backend_str == "rocm" or backend_str == "hip":
                             backend = BackendType.ROCM
-                        elif backend_str == "metal":
+                        elif backend_str == "metal" or backend_str == "mtl":
                             backend = BackendType.METAL
                         elif backend_str == "vulkan":
                             backend = BackendType.VULKAN
