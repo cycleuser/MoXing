@@ -227,6 +227,8 @@ with LlamaServer("./models/omnicoder-9b-q4_k_m.gguf") as server:
 | TinyLLama Q4_K_M | 0.62 GB | ~90 t/s |
 | OmniCoder-9B Q4_K_M | 5.34 GB | ~18 t/s |
 
+![MoXing 在 AMD GPU 上运行](images/screenshot.png)
+
 ## 系统要求
 
 - Python 3.8+
