@@ -22,7 +22,7 @@ from rich.progress import Progress, DownloadColumn, TransferSpeedColumn, TimeRem
 console = Console()
 
 
-DEFAULT_MODEL_DIR = Path.home() / ".cache" / "pyllm" / "models"
+DEFAULT_MODEL_DIR = Path.home() / ".cache" / "moxing" / "models"
 
 
 @dataclass

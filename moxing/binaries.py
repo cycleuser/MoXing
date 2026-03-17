@@ -1,5 +1,5 @@
 """
-Binary management for pyllm.
+Binary management for moxing.
 Downloads pre-built binaries from GitHub releases on first use.
 """
 
@@ -24,7 +24,7 @@ console = Console()
 
 
 LLAMA_CPP_REPO = "ggml-org/llama.cpp"
-BINARY_CACHE_DIR = Path.home() / ".cache" / "pyllm" / "binaries"
+BINARY_CACHE_DIR = Path.home() / ".cache" / "moxing" / "binaries"
 
 ESSENTIAL_BINARIES = [
     "llama-server",
@@ -48,7 +48,7 @@ class BinaryManager:
     Manage llama.cpp binaries.
     
     Downloads pre-built binaries from GitHub releases on first use.
-    Caches them in ~/.cache/pyllm/binaries/
+    Caches them in ~/.cache/moxing/binaries/
     """
     
     def __init__(self, cache_dir: Optional[Path] = None):
@@ -90,7 +90,7 @@ class BinaryManager:
         if not binary_path.exists():
             raise FileNotFoundError(
                 f"Binary not found: {binary_path}\n"
-                f"Please run 'pyllm download-binaries' to download binaries."
+                f"Please run 'moxing download-binaries' to download binaries."
             )
         
         return binary_path
@@ -123,7 +123,7 @@ class BinaryManager:
         url = f"https://api.github.com/repos/{LLAMA_CPP_REPO}/releases/latest"
         req = Request(url, headers={
             "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "pyllm-server"
+            "User-Agent": "moxing-server"
         })
         
         with urlopen(req, timeout=30) as response:
@@ -155,6 +155,9 @@ class BinaryManager:
         else:
             backend_order = [backend]
         
+        import platform as pf
+        is_arm = pf.machine().lower() in ("arm64", "aarch64")
+        
         for b in backend_order:
             b_pats = backend_patterns.get(b, [])
             
@@ -164,8 +167,14 @@ class BinaryManager:
                 if not any(p in name for p in patterns):
                     continue
                 
-                if b_pats and not any(p in name for p in b_pats):
-                    continue
+                if self.platform == "darwin":
+                    if is_arm and "arm64" not in name:
+                        continue
+                    if not is_arm and "x64" not in name and "x86" not in name:
+                        continue
+                else:
+                    if b_pats and not any(p in name for p in b_pats):
+                        continue
                 
                 if name.endswith((".zip", ".tar.gz", ".tgz")):
                     return asset
@@ -281,16 +290,32 @@ class BinaryManager:
         else:
             with tarfile.open(archive_path, "r:gz") as tf:
                 for member in tf.getmembers():
-                    if member.isfile():
-                        filename = Path(member.name).name
-                        if filename.startswith("llama-") or filename in ["main"]:
-                            source = tf.extractfile(member)
-                            target = dest_dir / filename
-                            with open(target, "wb") as f:
-                                f.write(source.read())
+                    filename = Path(member.name).name
+                    if not filename:
+                        continue
+                    
+                    is_binary = filename.startswith("llama-") or filename in ["main"]
+                    is_dylib = filename.endswith(".dylib") or filename.endswith(".so")
+                    
+                    if not (is_binary or is_dylib):
+                        continue
+                    
+                    target = dest_dir / filename
+                    
+                    if member.issym():
+                        if target.exists() or target.is_symlink():
+                            target.unlink()
+                        os.symlink(member.linkname, target)
+                        if not quiet:
+                            console.print(f"  [green]Linked: {filename} -> {member.linkname}[/green]")
+                    elif member.isfile():
+                        source = tf.extractfile(member)
+                        with open(target, "wb") as f:
+                            f.write(source.read())
+                        if is_binary:
                             os.chmod(target, 0o755)
-                            if not quiet:
-                                console.print(f"  [green]Extracted: {filename}[/green]")
+                        if not quiet:
+                            console.print(f"  [green]Extracted: {filename}[/green]")
     
     def clear_cache(self):
         """Clear binary cache."""
