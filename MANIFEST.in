@@ -1,0 +1,8 @@
+include README.md
+include pyproject.toml
+include LICENSE
+recursive-include moxing *.py
+recursive-exclude moxing/bin *
+include moxing/bin/windows/.gitkeep
+include moxing/bin/linux/.gitkeep
+include moxing/bin/darwin/.gitkeep
