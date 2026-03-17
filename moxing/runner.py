@@ -43,8 +43,14 @@ class RunConfig:
         device = self.device_config.device
         if device.backend == BackendType.CPU:
             device_str = "cpu"
+        elif device.backend == BackendType.METAL:
+            device_str = f"MTL{device.index}"
+        elif device.backend == BackendType.CUDA:
+            device_str = f"CUDA{device.index}"
+        elif device.backend == BackendType.VULKAN:
+            device_str = f"Vulkan{device.index}"
         else:
-            device_str = f"{device.backend.value.capitalize()}{device.index}"
+            device_str = "auto"
         
         return {
             "model": str(self.model_path),
