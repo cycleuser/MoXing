@@ -227,6 +227,8 @@ On AMD Radeon RX590 GME (8GB VRAM) with Vulkan backend:
 | TinyLLama Q4_K_M | 0.62 GB | ~90 t/s |
 | OmniCoder-9B Q4_K_M | 5.34 GB | ~18 t/s |
 
+![MoXing Running on AMD GPU](images/screenshot.png)
+
 ## Requirements
 
 - Python 3.8+
