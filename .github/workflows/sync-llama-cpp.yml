@@ -1,0 +1,72 @@
+name: Sync llama.cpp
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at UTC 00:00
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      has_new_version: ${{ steps.check.outputs.has_new_version }}
+      llama_version: ${{ steps.check.outputs.llama_version }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check for new llama.cpp version
+        id: check
+        run: |
+          # Get current bundled version
+          CURRENT=""
+          if [ -f "moxing/bin/VERSION" ]; then
+            CURRENT=$(cat moxing/bin/VERSION | head -1)
+          fi
+          
+          # Get latest llama.cpp version
+          LATEST=$(curl -s https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | jq -r .tag_name)
+          
+          echo "Current: $CURRENT"
+          echo "Latest: $LATEST"
+          
+          if [ "$CURRENT" != "$LATEST" ] && [ -n "$LATEST" ]; then
+            echo "has_new_version=true" >> $GITHUB_OUTPUT
+            echo "llama_version=$LATEST" >> $GITHUB_OUTPUT
+            
+            # Create issue for tracking
+            gh issue create \
+              --title "Auto-build: llama.cpp $LATEST" \
+              --body "New llama.cpp version detected. Triggering automatic wheel build." \
+              --label "auto-build" || true
+          else
+            echo "has_new_version=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build:
+    needs: check
+    if: needs.check.outputs.has_new_version == 'true'
+    uses: ./.github/workflows/build-wheels.yml
+    with:
+      llama_version: ${{ needs.check.outputs.llama_version }}
+    secrets: inherit
+
+  update-version:
+    needs: [check, build]
+    if: needs.check.outputs.has_new_version == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Update version file
+        run: |
+          echo "${{ needs.check.outputs.llama_version }}" > moxing/bin/VERSION
+      
+      - name: Commit version update
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update llama.cpp to ${{ needs.check.outputs.llama_version }}"
+          file_pattern: moxing/bin/VERSION

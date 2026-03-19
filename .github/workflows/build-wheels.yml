@@ -1,0 +1,233 @@
+name: Build Wheels
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      llama_version:
+        description: 'llama.cpp version (e.g., b8420, or "latest")'
+        required: false
+        default: 'latest'
+      platforms:
+        description: 'Platforms to build (comma-separated, or "all")'
+        required: false
+        default: 'all'
+      upload_test:
+        description: 'Upload to TestPyPI instead of PyPI'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      platforms: ${{ steps.resolve.outputs.platforms }}
+    
+    steps:
+      - name: Resolve llama.cpp version
+        id: resolve
+        run: |
+          VERSION="${{ inputs.llama_version || 'latest' }}"
+          
+          if [ "$VERSION" = "latest" ] || [ -z "$VERSION" ]; then
+            VERSION=$(curl -s https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | jq -r .tag_name)
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Resolved llama.cpp version: $VERSION"
+          
+          PLATFORMS="${{ inputs.platforms || 'all' }}"
+          if [ "$PLATFORMS" = "all" ]; then
+            PLATFORMS='["darwin-arm64", "darwin-x64", "linux-x64-cuda", "linux-x64-vulkan", "linux-x64-rocm", "linux-x64-cpu", "windows-x64-cuda", "windows-x64-vulkan", "windows-x64-cpu"]'
+          else
+            PLATFORMS=$(echo "$PLATFORMS" | jq -R 'split(",")')
+          fi
+          
+          echo "platforms=$PLATFORMS" >> $GITHUB_OUTPUT
+          echo "Platforms: $PLATFORMS"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+      
+      - name: Build all wheels
+        env:
+          LLAMA_VERSION: ${{ needs.prepare.outputs.version }}
+          PLATFORMS: ${{ needs.prepare.outputs.platforms }}
+        run: |
+          python scripts/build_all_wheels.py \
+            --version "$LLAMA_VERSION" \
+            --platform "$(echo $PLATFORMS | jq -r 'join(",")')"
+      
+      - name: List built wheels
+        run: |
+          echo "Built wheels:"
+          ls -la dist/*.whl || echo "No wheels found"
+          
+          echo ""
+          echo "Wheel sizes:"
+          for w in dist/*.whl; do
+            size=$(stat -c%s "$w" 2>/dev/null || stat -f%z "$w" 2>/dev/null)
+            echo "  $(basename $w): $((size / 1024 / 1024)) MB"
+          done
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: dist/*.whl
+          retention-days: 30
+
+  test:
+    needs: [prepare, build]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+    
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install moxing
+        shell: bash
+        run: |
+          # Find matching wheel for this platform
+          if [ "${{ matrix.platform }}" = "darwin" ]; then
+            if [ "$(uname -m)" = "arm64" ]; then
+              WHEEL=$(ls dist/*macosx*arm64*.whl | head -1 || echo "")
+            else
+              WHEEL=$(ls dist/*macosx*x86_64*.whl | head -1 || echo "")
+            fi
+          elif [ "${{ matrix.platform }}" = "windows" ]; then
+            WHEEL=$(ls dist/*win_amd64*.whl | head -1 || echo "")
+          else
+            WHEEL=$(ls dist/*manylinux*x86_64*.whl | head -1 || echo "")
+          fi
+          
+          if [ -n "$WHEEL" ] && [ -f "$WHEEL" ]; then
+            echo "Installing: $WHEEL"
+            pip install "$WHEEL"
+          else
+            echo "No matching wheel found, installing from source"
+            pip install httpx pydantic rich typer psutil
+          fi
+      
+      - name: Test import
+        shell: bash
+        run: |
+          python -c "
+          import moxing
+          print(f'MoXing version: {moxing.__version__}')
+          
+          from moxing.binaries import BinaryManager, PlatformDetector
+          
+          print(f'Platform: {PlatformDetector.get_platform_name()}')
+          print(f'Detected backend: {PlatformDetector.detect_backend()}')
+          
+          mgr = BinaryManager()
+          print(f'Has builtin binaries: {mgr.has_builtin_binaries()}')
+          print(f'Is downloaded: {mgr.is_downloaded()}')
+          "
+
+  publish:
+    needs: [prepare, build, test]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist
+      
+      - name: List wheels to publish
+        run: |
+          echo "Wheels to publish:"
+          ls -la dist/
+      
+      - name: Publish to TestPyPI
+        if: inputs.upload_test == true
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_TOKEN }}
+        run: |
+          twine upload --repository testpypi dist/*.whl --skip-existing
+      
+      - name: Publish to PyPI
+        if: inputs.upload_test != true && github.event_name == 'push'
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          twine upload dist/*.whl --skip-existing
+      
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*.whl
+          generate_release_notes: true
+          body: |
+            ## MoXing Release
+            
+            llama.cpp version: ${{ needs.prepare.outputs.version }}
+            
+            ### Installation
+            
+            ```bash
+            # Auto-detect (recommended)
+            pip install moxing
+            
+            # Specific backend
+            pip install moxing[cuda]      # NVIDIA GPU (includes CUDA runtime)
+            pip install moxing[vulkan]    # Vulkan
+            pip install moxing[rocm]      # AMD ROCm (Linux)
+            pip install moxing[metal]     # Apple Metal (macOS)
+            ```
+            
+            ### Included Binaries
+            
+            | Platform | Backend | Notes |
+            |----------|---------|-------|
+            | macOS ARM64 | Metal | Apple Silicon |
+            | macOS x64 | Metal | Intel Mac |
+            | Windows x64 | CUDA 12.4 | NVIDIA GPU (runtime included) |
+            | Windows x64 | Vulkan | Cross-platform |
+            | Linux x64 | CUDA 12.4 | NVIDIA GPU |
+            | Linux x64 | Vulkan | Cross-platform |
+            | Linux x64 | ROCm | AMD GPU |

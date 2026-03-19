@@ -13,16 +13,7 @@ authors = [
     { name = "MoXing Contributors" },
 ]
 keywords = [
-    "llama",
-    "llama.cpp",
-    "gguf",
-    "openai",
-    "api",
-    "gpu",
-    "vulkan",
-    "cuda",
-    "ai",
-    "llm",
+    "llama", "llama.cpp", "gguf", "openai", "api", "gpu", "vulkan", "cuda", "ai", "llm", "metal", "rocm",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -57,10 +48,14 @@ dev = [
 openai = ["openai>=1.0.0"]
 hf = ["huggingface_hub>=0.20.0"]
 modelscope = ["modelscope>=1.10.0"]
-metal = []
+
 cuda = []
 vulkan = []
+metal = []
+rocm = []
 cpu = []
+auto = []
+
 all = [
     "openai>=1.0.0",
     "huggingface_hub>=0.20.0",
@@ -69,7 +64,7 @@ all = [
 
 [project.scripts]
 moxing = "moxing.cli:app"
-moxing-download = "moxing.post_install:main"
+moxing-download = "moxing.backend_installer:main"
 
 [project.urls]
 Homepage = "https://github.com/cycleuser/MoXing"
