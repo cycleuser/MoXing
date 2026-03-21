@@ -266,7 +266,11 @@ def extract_binaries(archive: Path, dest: Path, config: PlatformConfig) -> List[
                 src = Path(root) / f
                 
                 is_binary = any(f.startswith(b) for b in BINARIES)
-                is_lib = f.endswith((".dylib", ".so", ".dll"))
+                is_lib = (
+                    f.endswith((".dylib", ".so", ".dll")) or
+                    ".so." in f or
+                    ".dylib." in f
+                )
                 
                 if is_binary or is_lib:
                     dst = dest / f

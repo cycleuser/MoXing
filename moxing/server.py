@@ -48,7 +48,7 @@ def _find_binary() -> Path:
     from moxing.binaries import get_binary_manager
     
     manager = get_binary_manager()
-    if not manager.is_downloaded():
+    if not manager.has_binaries():
         console.print("[blue]Downloading llama.cpp binaries...[/blue]")
         manager.download_binaries()
     
@@ -247,7 +247,7 @@ class LlamaServer:
             except:
                 pass
             
-            if self._process.poll() is not None:
+            if self._process is not None and self._process.poll() is not None:
                 stdout, stderr = self._process.communicate()
                 raise RuntimeError(f"Server failed to start:\n{stderr}")
                 

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-MoXing (模型) is a Python wrapper for llama.cpp that provides an OpenAI API compatible LLM backend with automatic GPU detection and model downloading. It supports Vulkan, CUDA, ROCm, and Metal backends.
+MoXing (模型) is a Python wrapper for llama.cpp that provides an OpenAI API compatible LLM backend with automatic GPU detection and model downloading. It supports CPU, Vulkan, CUDA, ROCm, and Metal backends.
 
 ## Build/Lint/Test Commands
 
@@ -25,8 +25,31 @@ pytest -x --tb=short
 ### Building the Package
 
 ```bash
-python -m build
+# Build all platform-backend wheels
+python scripts/build_platform_wheels.py
+
+# Build specific wheel(s)
+python scripts/build_platform_wheels.py --platform linux-x64-vulkan
+python scripts/build_platform_wheels.py --platform windows-x64-cuda,darwin-arm64-metal
+
+# Download binaries first, then build
+python scripts/build_platform_wheels.py --download
+
+# List available wheels
+python scripts/build_platform_wheels.py --list
 ```
+
+### Wheel Sizes
+
+| Wheel | Size |
+|-------|------|
+| linux-x64-cpu | 18 MB |
+| linux-x64-vulkan | 34 MB |
+| linux-x64-rocm | 133 MB |
+| windows-x64-cpu | 17 MB |
+| windows-x64-cuda | 379 MB |
+| windows-x64-vulkan | 33 MB |
+| darwin-arm64-metal | 14 MB |
 
 ### CLI Commands (for testing)
 
@@ -37,6 +60,29 @@ moxing serve ./model.gguf -p 8080
 moxing bench ./model.gguf
 moxing speed ./model.gguf
 ```
+
+## Distribution
+
+MoXing uses **one wheel per platform-backend** for minimal download sizes:
+
+```bash
+# Install specific wheel
+pip install ./moxing-0.1.7-py3-none-linux_x64_vulkan.whl
+pip install ./moxing-0.1.7-py3-none-windows_x64_cuda.whl
+pip install ./moxing-0.1.7-py3-none-darwin_arm64_metal.whl
+```
+
+**Backend Availability**:
+| Platform | CPU | CUDA | Vulkan | ROCm | Metal |
+|----------|-----|------|--------|------|-------|
+| Linux x64 | ✅ | ❌ system | ✅ | ✅ | - |
+| Windows x64 | ✅ | ✅ bundled | ✅ | - | - |
+| macOS ARM64 | ✅ | - | - | - | ✅ |
+
+**Notes**:
+- Linux CUDA requires system CUDA installation (not bundled)
+- Windows CUDA includes runtime (~379MB)
+- Each wheel contains only ONE backend's binaries
 
 ## Code Style Guidelines
 
@@ -255,7 +301,19 @@ moxing/
     runner.py        # AutoRunner for easy usage
     benchmark.py     # Performance benchmarking
     binaries.py      # Binary management
-    bin/             # Pre-built binaries
+    bin/             # Pre-built binaries (one subdir per platform-backend)
+        linux-x64-cpu/
+        linux-x64-vulkan/
+        linux-x64-rocm/
+        windows-x64-cpu/
+        windows-x64-cuda/
+        windows-x64-vulkan/
+        darwin-arm64-metal/
+
+scripts/
+    build_platform_wheels.py  # Build platform-specific wheels
+    bundle_all_binaries.py    # Download all binaries
+    download_binaries.sh      # Shell script for offline download
 ```
 
 ## Important Notes
@@ -265,3 +323,6 @@ moxing/
 - All external dependencies must be in `pyproject.toml`
 - Handle cross-platform differences (Windows, Linux, macOS)
 - Use `sys.platform` checks for platform-specific code
+- Each wheel contains ONE platform-backend combination
+- Windows CUDA wheel includes CUDA runtime (~379MB)
+- Linux CUDA requires system CUDA installation
