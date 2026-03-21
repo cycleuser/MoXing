@@ -494,14 +494,17 @@ def download_binaries(
     force: bool = typer.Option(False, "-f", "--force", help="Force re-download"),
 ):
     """Download pre-built llama.cpp binaries."""
-    from moxing.binaries import get_binary_manager
+    from moxing.binaries import get_binary_manager, list_available_backends
     
-    manager = get_binary_manager()
+    manager = get_binary_manager(backend)
     
-    console.print(f"[blue]Downloading binaries for {manager.platform}...[/blue]")
+    console.print(f"[blue]Downloading binaries for {manager.platform_name} ({manager.backend})...[/blue]")
+    
+    available = list_available_backends()
+    console.print(f"[dim]Available bundled backends: {available}[/dim]")
     
     try:
-        manager.download_binaries(backend=backend, force=force)
+        manager.download_binaries(force=force)
         
         binaries = manager.list_cached_binaries()
         console.print(f"\n[green]Installed binaries:[/green]")

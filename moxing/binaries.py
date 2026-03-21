@@ -1,17 +1,31 @@
 """
 Binary management for moxing.
 
-Supports three-tier binary loading:
-1. Wheel built-in binaries (moxing/bin/{platform}/)
-2. Local cache (~/.cache/moxing/binaries/{platform}/)
-3. Runtime download from GitHub/mirrors
+Supports two distribution modes:
 
-Users can install with extras for automatic backend selection:
-    pip install moxing[cuda]      # NVIDIA GPU
-    pip install moxing[vulkan]    # Vulkan
-    pip install moxing[metal]     # Apple Metal
-    pip install moxing[rocm]      # AMD ROCm
-    pip install moxing[auto]      # Auto-detect
+1. Platform-specific wheels (recommended):
+   - moxing-0.1.6-py3-none-linux_x86_64_cpu.whl
+   - moxing-0.1.6-py3-none-win_amd64_cuda.whl
+   - Each wheel contains only one platform's binaries
+   - Smaller downloads, faster installs
+
+2. Universal wheel with all platforms:
+   - moxing-0.1.6-py3-none-any.whl
+   - Contains all platform binaries
+   - Larger but works everywhere
+
+Binary loading priority:
+    1. Bundled binaries: moxing/bin/{os}-{arch}-{backend}/
+    2. Cached binaries: ~/.cache/moxing/binaries/{os}-{arch}-{backend}/
+    3. Runtime download from GitHub
+
+Install examples:
+    pip install moxing              # Auto-detect best backend
+    pip install moxing[cuda]        # Force CUDA backend
+    pip install moxing[vulkan]      # Force Vulkan backend
+    pip install moxing[metal]       # Force Metal backend (macOS)
+    pip install moxing[rocm]        # Force ROCm backend (AMD)
+    pip install moxing[cpu]         # Force CPU backend
 """
 
 import os
@@ -25,7 +39,7 @@ import tempfile
 import platform
 import subprocess
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Dict
 from dataclasses import dataclass
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
@@ -38,8 +52,26 @@ console = Console()
 
 LLAMA_CPP_REPO = "ggml-org/llama.cpp"
 CACHE_DIR = Path.home() / ".cache" / "moxing" / "binaries"
+BIN_DIR = Path(__file__).parent / "bin"
 
 ESSENTIAL_BINARIES = ["llama-server", "llama-cli", "llama-bench", "llama-quantize"]
+
+BACKEND_PRIORITY = {
+    "linux": ["cuda", "vulkan", "rocm", "cpu"],
+    "windows": ["cuda", "vulkan", "cpu"],
+    "darwin": ["metal", "cpu"],
+}
+
+PLATFORM_ALIASES = {
+    "linux_x86_64": "linux-x64",
+    "linux_x64": "linux-x64",
+    "win_amd64": "windows-x64",
+    "win_x64": "windows-x64",
+    "macosx_arm64": "darwin-arm64",
+    "darwin_arm64": "darwin-arm64",
+    "macosx_x86_64": "darwin-x64",
+    "darwin_x64": "darwin-x64",
+}
 
 
 @dataclass
@@ -118,21 +150,67 @@ class PlatformDetector:
             return False
 
 
+def detect_bundled_platform() -> Optional[str]:
+    """
+    Detect what platform's binaries are bundled in this wheel.
+    
+    Returns None for universal wheels (all platforms bundled).
+    Returns platform name for platform-specific wheels.
+    """
+    if not BIN_DIR.exists():
+        return None
+    
+    bundled = list(BIN_DIR.iterdir())
+    
+    if len(bundled) == 1 and bundled[0].is_dir():
+        name = bundled[0].name
+        if "-" in name:
+            return name
+    
+    return None
+
+
+def get_wheel_platform_info() -> dict:
+    """
+    Get information about the current wheel's platform.
+    
+    Returns:
+        dict with keys: 'bundled_platform', 'is_universal', 'available_backends'
+    """
+    bundled = detect_bundled_platform()
+    
+    available = {}
+    if BIN_DIR.exists():
+        for d in BIN_DIR.iterdir():
+            if d.is_dir() and "-" in d.name:
+                parts = d.name.rsplit("-", 1)
+                if len(parts) == 2:
+                    backend = parts[1]
+                    server = d / ("llama-server.exe" if sys.platform == "win32" else "llama-server")
+                    available[backend] = server.exists()
+    
+    return {
+        "bundled_platform": bundled,
+        "is_universal": bundled is None and len(available) > 1,
+        "available_backends": available
+    }
+
+
 class BinaryManager:
     """
-    Manage llama.cpp binaries with three-tier loading:
+    Manage llama.cpp binaries with bundled support.
     
-    1. Wheel built-in: moxing/bin/{platform}-{backend}/
-    2. Local cache: ~/.cache/moxing/binaries/{platform}-{backend}/
-    3. Runtime download from GitHub
+    Priority:
+    1. Bundled binaries in moxing/bin/{os}-{arch}-{backend}/
+    2. Cached binaries in ~/.cache/moxing/binaries/{os}-{arch}-{backend}/
+    3. Download from GitHub releases
     """
     
-    def __init__(self, cache_dir: Optional[Path] = None, backend: str = "auto"):
+    def __init__(self, backend: str = "auto", cache_dir: Optional[Path] = None):
         self.cache_dir = cache_dir or CACHE_DIR
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self._backend = backend if backend != "auto" else None
-        self._version_file = self.cache_dir / "version.txt"
-        self._binary_info: Optional[BinaryInfo] = None
+        self._requested_backend = backend
+        self._resolved_backend: Optional[str] = None
     
     @property
     def platform_name(self) -> str:
@@ -140,115 +218,128 @@ class BinaryManager:
     
     @property
     def backend(self) -> str:
-        if self._backend:
-            return self._backend
-        return PlatformDetector.detect_backend()
+        if self._resolved_backend:
+            return self._resolved_backend
+        
+        if self._requested_backend != "auto":
+            self._resolved_backend = self._requested_backend
+            return self._resolved_backend
+        
+        detected = PlatformDetector.detect_backend()
+        
+        if self._has_bundled_backend(detected):
+            self._resolved_backend = detected
+            return detected
+        
+        for fallback in BACKEND_PRIORITY.get(PlatformDetector.get_os(), ["cpu"]):
+            if self._has_bundled_backend(fallback):
+                self._resolved_backend = fallback
+                return fallback
+        
+        self._resolved_backend = detected
+        return detected
     
     @property
     def binary_extension(self) -> str:
         return ".exe" if sys.platform == "win32" else ""
     
-    @property
-    def lib_extension(self) -> str:
-        if sys.platform == "darwin":
-            return ".dylib"
-        elif sys.platform == "win32":
-            return ".dll"
-        else:
-            return ".so"
+    def _has_bundled_backend(self, backend: str) -> bool:
+        """Check if a specific backend is bundled."""
+        platform_dir = BIN_DIR / f"{self.platform_name}-{backend}"
+        if platform_dir.exists():
+            server = platform_dir / f"llama-server{self.binary_extension}"
+            return server.exists()
+        return False
     
-    def get_platform_dir(self, backend: str = None) -> str:
-        """Get platform directory name."""
-        b = backend or self.backend
-        pf = self.platform_name
+    def list_bundled_backends(self) -> List[str]:
+        """List all bundled backends for current platform."""
+        backends = []
+        if not BIN_DIR.exists():
+            return backends
         
-        if b in ("metal", "cpu"):
-            return pf
-        else:
-            return f"{pf}-{b}"
+        prefix = f"{self.platform_name}-"
+        for d in BIN_DIR.iterdir():
+            if d.is_dir() and d.name.startswith(prefix):
+                backend = d.name[len(prefix):]
+                server = d / f"llama-server{self.binary_extension}"
+                if server.exists():
+                    backends.append(backend)
+        
+        return backends
     
-    def get_builtin_binary_dir(self, backend: str = None) -> Path:
-        """Get path to wheel built-in binaries."""
-        dir_name = self.get_platform_dir(backend)
-        return Path(__file__).parent / "bin" / dir_name
+    def get_binary_dir(self, backend: Optional[str] = None) -> Path:
+        """Get the directory containing binaries for a backend."""
+        b = backend or self.backend
+        return BIN_DIR / f"{self.platform_name}-{b}"
     
-    def get_cache_binary_dir(self, backend: str = None) -> Path:
-        """Get path to cached binaries."""
-        dir_name = self.get_platform_dir(backend)
-        return self.cache_dir / dir_name
+    def get_cache_dir(self, backend: Optional[str] = None) -> Path:
+        """Get the cache directory for a backend."""
+        b = backend or self.backend
+        return self.cache_dir / f"{self.platform_name}-{b}"
     
     def get_binary_path(self, name: str = "llama-server") -> Path:
-        """Get path to a binary, checking all locations."""
+        """Get path to a binary, checking bundled then cache."""
         binary_name = name if name.endswith(self.binary_extension) else name + self.binary_extension
         
-        # 1. Check wheel built-in
-        builtin_dir = self.get_builtin_binary_dir()
-        builtin_path = builtin_dir / binary_name
-        if builtin_path.exists():
-            return builtin_path
+        bundled_dir = self.get_binary_dir()
+        bundled_path = bundled_dir / binary_name
+        if bundled_path.exists():
+            return bundled_path
         
-        # 2. Check cache
-        cache_dir = self.get_cache_binary_dir()
+        cache_dir = self.get_cache_dir()
         cache_path = cache_dir / binary_name
         if cache_path.exists():
             return cache_path
         
-        # 3. Download
         return self._download_and_get_path(name)
     
-    def has_builtin_binaries(self) -> bool:
-        """Check if wheel contains built-in binaries."""
-        builtin_dir = self.get_builtin_binary_dir()
-        server = builtin_dir / f"llama-server{self.binary_extension}"
+    def has_binaries(self) -> bool:
+        """Check if binaries are available (bundled or cached)."""
+        bundled_dir = self.get_binary_dir()
+        server = bundled_dir / f"llama-server{self.binary_extension}"
+        if server.exists():
+            return True
+        
+        cache_dir = self.get_cache_dir()
+        server = cache_dir / f"llama-server{self.binary_extension}"
         return server.exists()
     
     def _download_and_get_path(self, name: str) -> Path:
         """Download binaries and return path."""
         self.download_binaries()
         
-        cache_path = self.get_cache_binary_dir() / name
+        cache_path = self.get_cache_dir() / name
         if not cache_path.exists():
-            cache_path = self.get_cache_binary_dir() / (name + self.binary_extension)
+            cache_path = self.get_cache_dir() / (name + self.binary_extension)
         
         if not cache_path.exists():
             raise FileNotFoundError(f"Binary not found after download: {name}")
         
         return cache_path
     
-    def get_all_dlls(self) -> List[Path]:
-        """Get all required DLLs for Windows."""
-        if sys.platform != "win32":
-            return []
+    def get_all_libs(self) -> List[Path]:
+        """Get all required shared libraries."""
+        libs = []
         
-        builtin_dir = self.get_builtin_binary_dir()
-        cache_dir = self.get_cache_binary_dir()
+        for dir_path in [self.get_binary_dir(), self.get_cache_dir()]:
+            if dir_path.exists():
+                if sys.platform == "win32":
+                    libs.extend(dir_path.glob("*.dll"))
+                elif sys.platform == "darwin":
+                    libs.extend(dir_path.glob("*.dylib"))
+                else:
+                    libs.extend(dir_path.glob("*.so*"))
         
-        dlls = []
-        for d in [builtin_dir, cache_dir]:
-            if d.exists():
-                dlls.extend(d.glob("*.dll"))
-        
-        return dlls
-    
-    def is_downloaded(self) -> bool:
-        """Check if binaries are available (builtin or cached)."""
-        if self.has_builtin_binaries():
-            return True
-        
-        cache_dir = self.get_cache_binary_dir()
-        server = cache_dir / f"llama-server{self.binary_extension}"
-        return server.exists()
+        return libs
     
     def get_installed_version(self) -> Optional[str]:
         """Get installed binary version."""
-        version_file = self.get_cache_binary_dir() / "VERSION"
-        if version_file.exists():
-            return version_file.read_text().strip().split("\n")[0]
-        
-        builtin_version = self.get_builtin_binary_dir() / "VERSION"
-        if builtin_version.exists():
-            return builtin_version.read_text().strip().split("\n")[0]
-        
+        for version_file in [
+            self.get_binary_dir() / "VERSION",
+            self.get_cache_dir() / "VERSION"
+        ]:
+            if version_file.exists():
+                return version_file.read_text().strip().split("\n")[0]
         return None
     
     def get_latest_release(self) -> dict:
@@ -299,8 +390,6 @@ class BinaryManager:
             elif backend == "cuda":
                 if "cudart" in name:
                     return asset
-                if any(p in name for p in b_pats):
-                    pass
             elif b_pats and not any(p in name for p in b_pats):
                 continue
             
@@ -312,10 +401,10 @@ class BinaryManager:
     def download_binaries(self, force: bool = False, quiet: bool = False) -> Path:
         """Download binaries from GitHub release."""
         
-        if not force and self.is_downloaded():
+        if not force and self.has_binaries():
             if not quiet:
                 console.print("[green]Binaries already available[/green]")
-            return self.get_cache_binary_dir()
+            return self.get_cache_dir()
         
         if not quiet:
             console.print("[blue]Fetching llama.cpp release info...[/blue]")
@@ -326,6 +415,7 @@ class BinaryManager:
             
             if not quiet:
                 console.print(f"[blue]Found release: {tag}[/blue]")
+                console.print(f"[blue]Backend: {self.backend}[/blue]")
             
             asset = self.find_asset_for_platform(release["assets"])
             
@@ -335,7 +425,7 @@ class BinaryManager:
             if not quiet:
                 console.print(f"[blue]Downloading: {asset['name']}[/blue]")
             
-            cache_dir = self.get_cache_binary_dir()
+            cache_dir = self.get_cache_dir()
             cache_dir.mkdir(parents=True, exist_ok=True)
             
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -398,7 +488,11 @@ class BinaryManager:
                     filename = Path(member).name
                     if filename:
                         is_binary = any(filename.startswith(b) for b in ESSENTIAL_BINARIES)
-                        is_lib = filename.endswith((".dll", ".so", ".dylib"))
+                        is_lib = (
+                            filename.endswith((".dll", ".so", ".dylib")) or
+                            ".so." in filename or
+                            ".dylib." in filename
+                        )
                         
                         if is_binary or is_lib:
                             source = zf.open(member)
@@ -417,7 +511,11 @@ class BinaryManager:
                     if member.isfile() or member.issym():
                         filename = Path(member.name).name
                         is_binary = any(filename.startswith(b) for b in ESSENTIAL_BINARIES)
-                        is_lib = filename.endswith((".dll", ".so", ".dylib"))
+                        is_lib = (
+                            filename.endswith((".dll", ".so", ".dylib")) or
+                            ".so." in filename or
+                            ".dylib." in filename
+                        )
                         
                         if is_binary or is_lib:
                             if member.issym():
@@ -429,15 +527,16 @@ class BinaryManager:
                                     console.print(f"  [green]{filename} -> {member.linkname}[/green]")
                             else:
                                 source = tf.extractfile(member)
-                                target = dest_dir / filename
-                                with open(target, "wb") as f:
-                                    f.write(source.read())
-                                
-                                if is_binary:
-                                    os.chmod(target, 0o755)
-                                
-                                if not quiet:
-                                    console.print(f"  [green]{filename}[/green]")
+                                if source:
+                                    target = dest_dir / filename
+                                    with open(target, "wb") as f:
+                                        f.write(source.read())
+                                    
+                                    if is_binary:
+                                        os.chmod(target, 0o755)
+                                    
+                                    if not quiet:
+                                        console.print(f"  [green]{filename}[/green]")
     
     def clear_cache(self):
         """Clear binary cache."""
@@ -447,17 +546,14 @@ class BinaryManager:
     
     def list_cached_binaries(self) -> List[str]:
         """List cached binaries."""
-        builtin_dir = self.get_builtin_binary_dir()
-        cache_dir = self.get_cache_binary_dir()
-        
         binaries = []
         
-        for d in [builtin_dir, cache_dir]:
-            if d.exists():
+        for dir_path in [self.get_binary_dir(), self.get_cache_dir()]:
+            if dir_path.exists():
                 if self.binary_extension:
-                    binaries.extend([f.stem for f in d.glob(f"*{self.binary_extension}")])
+                    binaries.extend([f.stem for f in dir_path.glob(f"*{self.binary_extension}")])
                 else:
-                    binaries.extend([f.name for f in d.iterdir() if f.is_file() and os.access(f, os.X_OK)])
+                    binaries.extend([f.name for f in dir_path.iterdir() if f.is_file() and os.access(f, os.X_OK)])
         
         return list(set(binaries))
 
@@ -476,12 +572,28 @@ def get_binary_manager(backend: str = "auto") -> BinaryManager:
 def ensure_binaries(backend: str = "auto") -> Path:
     """Ensure binaries are available, return path to binary directory."""
     manager = get_binary_manager(backend)
-    if not manager.is_downloaded():
+    if not manager.has_binaries():
         manager.download_binaries(quiet=False)
-    return manager.get_cache_binary_dir()
+    return manager.get_cache_dir()
 
 
 def get_server_binary(backend: str = "auto") -> Path:
     """Get path to llama-server binary."""
     manager = get_binary_manager(backend)
     return manager.get_binary_path("llama-server")
+
+
+def list_available_backends() -> Dict[str, bool]:
+    """List all available backends and their status."""
+    manager = BinaryManager()
+    os_name = PlatformDetector.get_os()
+    
+    backends = BACKEND_PRIORITY.get(os_name, ["cpu"])
+    if os_name == "darwin":
+        backends = ["metal", "cpu"]
+    
+    result = {}
+    for backend in backends:
+        result[backend] = manager._has_bundled_backend(backend)
+    
+    return result
