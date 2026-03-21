@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-Create release and upload binaries to GitHub.
+Upload binaries to GitHub releases at:
+    https://github.com/cycleuser/MoXing/releases/tag/binaries
 
 Usage:
-    # First, package the binaries from moxing/bin/
+    # Package binaries
     python scripts/upload_binaries.py --package
     
-    # Then upload to GitHub (requires GH_TOKEN or gh auth login)
-    python scripts/upload_binaries.py --upload --version v0.1.8
+    # Upload to GitHub (requires gh auth login)
+    python scripts/upload_binaries.py --upload
 
-The binaries will be downloaded from:
-    https://github.com/cycleuser/moxing/releases
+The binaries will be downloaded by moxing from:
+    https://github.com/cycleuser/MoXing/releases/tag/binaries
 """
 
 import os
@@ -18,7 +19,6 @@ import sys
 import argparse
 import tarfile
 import zipfile
-import tempfile
 import subprocess
 from pathlib import Path
 
@@ -26,7 +26,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 BIN_DIR = REPO_ROOT / "moxing" / "bin"
 DIST_DIR = REPO_ROOT / "dist" / "binaries"
-MOXING_REPO = "cycleuser/moxing"
+MOXING_REPO = "cycleuser/MoXing"
+RELEASE_TAG = "binaries"
 
 
 def package_binaries():
@@ -43,11 +44,10 @@ def package_binaries():
         if "windows" in platform_name:
             archive_path = DIST_DIR / f"{platform_name}.zip"
             with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for file_path in platform_dir.rglob("*"):
+                for file_path in platform_dir.iterdir():
                     if file_path.is_file():
-                        arcname = file_path.name
-                        zf.write(file_path, arcname)
-                        print(f"  {arcname}")
+                        zf.write(file_path, file_path.name)
+                        print(f"  {file_path.name}")
                     elif file_path.is_symlink():
                         print(f"  {file_path.name} -> {os.readlink(file_path)}")
         else:
@@ -55,9 +55,8 @@ def package_binaries():
             with tarfile.open(archive_path, 'w:gz') as tf:
                 for file_path in platform_dir.iterdir():
                     if file_path.is_file():
-                        arcname = file_path.name
-                        tf.add(file_path, arcname)
-                        print(f"  {arcname}")
+                        tf.add(file_path, file_path.name)
+                        print(f"  {file_path.name}")
                     elif file_path.is_symlink():
                         info = tarfile.TarInfo(name=file_path.name)
                         info.type = tarfile.SYMTYPE
@@ -71,51 +70,49 @@ def package_binaries():
     print(f"\nAll packages created in: {DIST_DIR}")
 
 
-def upload_to_github(version: str):
+def upload_to_github():
     """Upload binaries to GitHub releases using gh CLI."""
     
     if not DIST_DIR.exists():
         print("No packages found. Run with --package first.")
         return
     
-    # Check gh CLI
     result = subprocess.run(["gh", "--version"], capture_output=True)
     if result.returncode != 0:
         print("Error: GitHub CLI (gh) not installed.")
         print("Install from: https://cli.github.com/")
         return
     
-    # Create release
-    print(f"\nCreating release {version}...")
+    print(f"\nUploading to release: {RELEASE_TAG}")
     
     # Check if release exists
     result = subprocess.run(
-        ["gh", "release", "view", version, "--repo", MOXING_REPO],
+        ["gh", "release", "view", RELEASE_TAG, "--repo", MOXING_REPO],
         capture_output=True
     )
     
-    if result.returncode == 0:
-        print(f"Release {version} already exists. Uploading assets...")
-    else:
+    if result.returncode != 0:
+        # Create release
         result = subprocess.run([
-            "gh", "release", "create", version,
+            "gh", "release", "create", RELEASE_TAG,
             "--repo", MOXING_REPO,
-            "--title", f"MoXing {version}",
-            "--notes", f"Binaries for MoXing {version}",
-            "--latest"
+            "--title", "Binaries",
+            "--notes", "Pre-built llama.cpp binaries for MoXing",
         ], capture_output=True, text=True)
         
         if result.returncode != 0:
             print(f"Error creating release: {result.stderr}")
             return
-        print(f"Created release: {version}")
+        print(f"Created release: {RELEASE_TAG}")
+    else:
+        print(f"Release {RELEASE_TAG} exists. Uploading assets...")
     
     # Upload assets
     for archive_path in DIST_DIR.iterdir():
         if archive_path.suffix in (".zip", ".gz"):
             print(f"\nUploading: {archive_path.name}")
             result = subprocess.run([
-                "gh", "release", "upload", version,
+                "gh", "release", "upload", RELEASE_TAG,
                 str(archive_path),
                 "--repo", MOXING_REPO,
                 "--clobber"
@@ -126,14 +123,13 @@ def upload_to_github(version: str):
             else:
                 print(f"  Done!")
     
-    print(f"\nRelease URL: https://github.com/{MOXING_REPO}/releases/tag/{version}")
+    print(f"\nRelease URL: https://github.com/{MOXING_REPO}/releases/tag/{RELEASE_TAG}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Package and upload binaries")
     parser.add_argument("--package", "-p", action="store_true", help="Package binaries")
     parser.add_argument("--upload", "-u", action="store_true", help="Upload to GitHub")
-    parser.add_argument("--version", "-v", default="v0.1.8", help="Release version")
     
     args = parser.parse_args()
     
@@ -141,7 +137,7 @@ def main():
         package_binaries()
     
     if args.upload:
-        upload_to_github(args.version)
+        upload_to_github()
     
     if not args.package and not args.upload:
         parser.print_help()

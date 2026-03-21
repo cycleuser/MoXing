@@ -1,34 +1,122 @@
 @echo off
-REM MoXing - Build and upload to PyPI
-setlocal
+REM MoXing - Upload wheel to PyPI
+REM
+REM This script uploads the built wheel to PyPI.
+REM Run generate_wheel.bat first to build the wheel.
+REM
+REM Usage:
+REM   upload_pypi.bat              Upload to PyPI
+REM   upload_pypi.bat --test       Upload to TestPyPI
+REM   upload_pypi.bat --check      Check wheel only, don't upload
+REM
+REM Prerequisites:
+REM   pip install twine
+REM   Set TWINE_USERNAME and TWINE_PASSWORD (or use API token)
+
+setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 if not defined PYTHON set "PYTHON=python"
-set "VERSION_FILE=moxing\__init__.py"
 
-echo === MoXing PyPI Upload ===
+REM Parse arguments
+set "TEST=0"
+set "CHECK_ONLY=0"
 
-echo [1/5] Bumping patch version...
-%PYTHON% -c "import re,sys;p='%VERSION_FILE%'.replace('\\','/');t=open(p).read();m=re.search(r'(__version__\s*=\s*\"(\d+\.\d+\.)(\d+)\")',t);old=m.group(2)+m.group(3);new=m.group(2)+str(int(m.group(3))+1);open(p,'w').write(t.replace(m.group(1),'__version__ = \"'+new+'\"'));print(f'  {old} -> {new}')"
-if %errorlevel% neq 0 (echo Version bump failed! & exit /b 1)
+:parse_args
+if "%~1"=="" goto :done_args
+if /i "%~1"=="--test" (
+    set "TEST=1"
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="-t" (
+    set "TEST=1"
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="--check" (
+    set "CHECK_ONLY=1"
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="-c" (
+    set "CHECK_ONLY=1"
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="--help" goto :show_help
+if /i "%~1"=="-h" goto :show_help
+echo Unknown option: %~1
+exit /b 1
 
-echo [2/5] Cleaning old builds...
-if exist dist rmdir /s /q dist
-if exist build rmdir /s /q build
-for /d %%i in (*.egg-info) do rmdir /s /q "%%i"
+:show_help
+echo Usage: upload_pypi.bat [OPTIONS]
+echo.
+echo Options:
+echo   --test, -t    Upload to TestPyPI instead of PyPI
+echo   --check, -c   Check wheel only, don't upload
+echo   --help, -h    Show this help
+echo.
+echo Prerequisites:
+echo   pip install twine
+echo   Set TWINE_USERNAME and TWINE_PASSWORD (or use API token)
+exit /b 0
 
-echo [3/5] Installing build tools...
-%PYTHON% -m pip install --upgrade build twine -q
+:done_args
 
-echo [4/5] Building package...
-%PYTHON% -m build
-if %errorlevel% neq 0 (echo Build failed! & exit /b 1)
-%PYTHON% -m twine check dist\*
+echo === MoXing PyPI Uploader ===
+
+REM Find wheel
+set "WHEEL="
+for /f "delims=" %%i in ('dir /b /o-d dist\*.whl 2^>nul') do (
+    set "WHEEL=dist\%%i"
+    goto :found_wheel
+)
+
+echo Error: No wheel found in dist\
+echo Run generate_wheel.bat first.
+exit /b 1
+
+:found_wheel
+echo Wheel: %WHEEL%
+
+REM Get version from wheel name
+for /f "tokens=2 delims=-" %%v in ("%WHEEL%") do set "VERSION=%%v"
+echo Version: %VERSION%
+
+REM Check wheel
+echo.
+echo [1/2] Checking wheel...
+%PYTHON% -m pip install --upgrade twine -q
+%PYTHON% -m twine check "%WHEEL%"
 if %errorlevel% neq 0 (echo Check failed! & exit /b 1)
 
-echo [5/5] Uploading to PyPI...
-%PYTHON% -m twine upload dist\*
-if %errorlevel% neq 0 (echo Upload failed! & exit /b 1)
+if "%CHECK_ONLY%"=="1" (
+    echo.
+    echo === Done (check only) ===
+    exit /b 0
+)
 
-echo === Done! ===
+REM Upload
+echo.
+echo [2/2] Uploading...
+
+if "%TEST%"=="1" (
+    echo Uploading to TestPyPI...
+    %PYTHON% -m twine upload --repository testpypi "%WHEEL%"
+    echo.
+    echo === Done! ===
+    echo TestPyPI URL: https://test.pypi.org/project/moxing/
+) else (
+    echo Uploading to PyPI...
+    %PYTHON% -m twine upload "%WHEEL%"
+    echo.
+    echo === Done! ===
+    echo PyPI URL: https://pypi.org/project/moxing/
+)
+
+echo.
+echo Version: %VERSION%
+echo Wheel: %WHEEL%
+
 endlocal

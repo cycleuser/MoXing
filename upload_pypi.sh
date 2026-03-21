@@ -1,37 +1,105 @@
 #!/usr/bin/env bash
-# MoXing - Build and upload to PyPI
+# MoXing - Upload wheel to PyPI
+#
+# This script uploads the built wheel to PyPI.
+# Run generate_wheel.sh first to build the wheel.
+#
+# Usage:
+#   ./upload_pypi.sh              # Upload to PyPI
+#   ./upload_pypi.sh --test       # Upload to TestPyPI
+#   ./upload_pypi.sh --check      # Check wheel only, don't upload
+#
+# Prerequisites:
+#   pip install twine
+#   Set TWINE_USERNAME and TWINE_PASSWORD (or use API token)
+
 set -e
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 PYTHON="${PYTHON:-python3}"
-VERSION_FILE="moxing/__init__.py"
 
-echo "=== MoXing PyPI Upload ==="
+# Parse arguments
+TEST=0
+CHECK_ONLY=0
 
-echo "[1/5] Bumping patch version..."
-"$PYTHON" -c "
-import re, sys
-p = '$VERSION_FILE'
-t = open(p,encoding='utf-8').read()
-m = re.search(r'(__version__\s*=\s*\"(\d+\.\d+\.)(\d+)\")', t)
-if not m: print('ERROR: cannot parse version'); sys.exit(1)
-old_v = m.group(2) + m.group(3)
-new_v = m.group(2) + str(int(m.group(3)) + 1)
-open(p,'w',encoding='utf-8').write(t.replace(m.group(1), '__version__ = \"' + new_v + '\"'))
-print(f'  {old_v} -> {new_v}')
-"
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --test|-t)
+            TEST=1
+            shift
+            ;;
+        --check|-c)
+            CHECK_ONLY=1
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --test, -t    Upload to TestPyPI instead of PyPI"
+            echo "  --check, -c   Check wheel only, don't upload"
+            echo "  --help, -h    Show this help"
+            echo ""
+            echo "Prerequisites:"
+            echo "  pip install twine"
+            echo "  Set TWINE_USERNAME and TWINE_PASSWORD (or use API token)"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
 
-echo "[2/5] Cleaning old builds..."
-rm -rf dist/ build/ *.egg-info moxing.egg-info
+echo "=== MoXing PyPI Uploader ==="
 
-echo "[3/5] Installing build tools..."
-"$PYTHON" -m pip install --upgrade build twine -q
+# Check for wheel
+WHEEL=$(ls -t dist/*.whl 2>/dev/null | head -1)
+if [[ -z "$WHEEL" ]]; then
+    echo "Error: No wheel found in dist/"
+    echo "Run generate_wheel.sh first."
+    exit 1
+fi
 
-echo "[4/5] Building package..."
-"$PYTHON" -m build
-"$PYTHON" -m twine check dist/*
+echo "Wheel: $WHEEL"
+WHEEL_SIZE=$(du -h "$WHEEL" | cut -f1)
+echo "Size: $WHEEL_SIZE"
 
-echo "[5/5] Uploading to PyPI..."
-"$PYTHON" -m twine upload dist/*
+# Get version from wheel name
+VERSION=$(basename "$WHEEL" | sed 's/moxing-\(.*\)-py3-none-any.whl/\1/')
+echo "Version: $VERSION"
 
-echo "=== Done! ==="
+# Check wheel
+echo ""
+echo "[1/2] Checking wheel..."
+"$PYTHON" -m pip install --upgrade twine -q
+"$PYTHON" -m twine check "$WHEEL"
+
+if [[ $CHECK_ONLY -eq 1 ]]; then
+    echo ""
+    echo "=== Done (check only) ==="
+    exit 0
+fi
+
+# Upload
+echo ""
+echo "[2/2] Uploading..."
+
+if [[ $TEST -eq 1 ]]; then
+    echo "Uploading to TestPyPI..."
+    "$PYTHON" -m twine upload --repository testpypi "$WHEEL"
+    echo ""
+    echo "=== Done! ==="
+    echo "TestPyPI URL: https://test.pypi.org/project/moxing/"
+else
+    echo "Uploading to PyPI..."
+    "$PYTHON" -m twine upload "$WHEEL"
+    echo ""
+    echo "=== Done! ==="
+    echo "PyPI URL: https://pypi.org/project/moxing/"
+fi
+
+echo ""
+echo "Version: $VERSION"
+echo "Wheel: $WHEEL"
