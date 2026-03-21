@@ -1,122 +1,276 @@
-# MoXing (模型)
+# MoXing
 
-直接运行 Ollama 模型，有时更快。支持 GGUF 压缩节省硬盘空间。
+A Python wrapper for llama.cpp that provides an OpenAI API compatible LLM backend with automatic GPU detection and model downloading.
 
-## 安装
+**Key Features:**
+- 🚀 **Faster than Ollama** - Direct llama.cpp execution without overhead
+- 🔧 **OpenAI Compatible** - Drop-in replacement for OpenAI API
+- 🎮 **Multi-GPU Support** - CUDA, Vulkan, ROCm, Metal backends
+- 📦 **Auto Download** - Models from HuggingFace, ModelScope, or Ollama
+- 💾 **GGUF Compression** - Save disk space with transparent decompression
+
+## Installation
 
 ```bash
 pip install moxing
 ```
 
-## 使用
+Binaries are downloaded automatically on first use (~60 MB). No manual setup required.
+
+## Quick Start
 
 ```bash
-# 查看 Ollama 模型
-moxing ollama list
+# Serve an Ollama model
+moxing ollama serve llama3.2
 
-# 运行模型
-moxing ollama serve carstenuhlig/omnicoder-9b
+# Serve from HuggingFace
+moxing serve Qwen/Qwen2.5-7B-Instruct-GGUF
 
-# 交互式选择
-moxing ollama list --select
+# Serve a local GGUF file
+moxing serve ./model.gguf --port 8080
 ```
 
-## 性能对比
+Then use OpenAI API:
 
-Apple M4 上测试 `carstenuhlig/omnicoder-9b`：
+```python
+from openai import OpenAI
 
-| 框架 | 速度 |
-|------|------|
-| Ollama | ~10 tokens/s |
-| MoXing | ~15 tokens/s |
+client = OpenAI(base_url="http://localhost:8080/v1", api_key="none")
+response = client.chat.completions.create(
+    model="local",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+print(response.choices[0].message.content)
+```
 
-## GGUF 压缩
+## CLI Commands
 
-压缩 GGUF 文件以节省硬盘空间。虽然 GGUF 已量化，压缩率约 3-5%，但多模型时节省可观。
+### Model Management
+
+| Command | Description |
+|---------|-------------|
+| `moxing serve <model>` | Start server with a model |
+| `moxing run <model> "prompt"` | Quick inference |
+| `moxing chat <model>` | Interactive chat |
+| `moxing download <repo>` | Download model from HF/ModelScope |
+| `moxing models` | List available models |
+
+### Ollama Integration
+
+| Command | Description |
+|---------|-------------|
+| `moxing ollama list` | List Ollama models |
+| `moxing ollama serve <model>` | Serve Ollama model |
+| `moxing ollama info <model>` | Show model details |
+
+### GGUF Compression
+
+| Command | Description |
+|---------|-------------|
+| `moxing compress pack <file>` | Compress GGUF file |
+| `moxing compress unpack <file>` | Decompress file |
+| `moxing compress split <file>` | Split into chunks |
+| `moxing compress merge <pattern>` | Merge chunks |
+
+### System & Diagnostics
+
+| Command | Description |
+|---------|-------------|
+| `moxing devices` | List GPU devices |
+| `moxing diagnose` | System diagnostics |
+| `moxing bench <model>` | Benchmark performance |
+| `moxing --version` | Show version info |
+
+## GPU Backends
+
+MoXing automatically detects and uses the best available backend:
+
+| Platform | CPU | CUDA | Vulkan | ROCm | Metal |
+|----------|-----|------|--------|------|-------|
+| Linux x64 | ✅ | ✅ | ✅ | ✅ | - |
+| Windows x64 | ✅ | ✅ | ✅ | - | - |
+| macOS ARM64 | ✅ | - | - | - | ✅ |
+
+Force a specific backend:
 
 ```bash
-# 压缩 GGUF 文件
-moxing compress pack model.gguf
+pip install moxing[cuda]   # NVIDIA GPU
+pip install moxing[vulkan] # Cross-platform GPU
+pip install moxing[metal]  # Apple Silicon
+pip install moxing[rocm]   # AMD GPU
+pip install moxing[cpu]    # CPU only
+```
 
-# 运行压缩后的文件（自动解压）
+## Model Sources
+
+### Ollama Models
+
+```bash
+moxing ollama list                  # List installed models
+moxing ollama serve llama3.2        # Serve with OpenAI API
+moxing ollama serve --select        # Interactive selection
+```
+
+### HuggingFace
+
+```bash
+moxing download Qwen/Qwen2.5-7B-Instruct-GGUF -q Q4_K_M
+moxing serve Qwen/Qwen2.5-7B-Instruct-GGUF
+```
+
+### ModelScope (China Mirror)
+
+```bash
+moxing download Qwen/Qwen2.5-7B-Instruct-GGUF --source modelscope
+```
+
+## Python API
+
+```python
+from moxing import quick_run, quick_server, LlamaServer
+
+# Quick inference
+result = quick_run("llama3.2", "Write a haiku about coding")
+print(result)
+
+# Start server
+with quick_server("llama3.2", port=8080) as server:
+    # Use OpenAI API at http://localhost:8080/v1
+    pass
+
+# Full control
+server = LlamaServer(
+    model="model.gguf",
+    backend="cuda",
+    ctx_size=8192,
+    gpu_layers=99
+)
+server.start()
+```
+
+## GGUF Compression
+
+Save disk space by compressing GGUF files:
+
+```bash
+# Compress (typically 3-5% smaller)
+moxing compress pack model.gguf
+# Creates: model.gguf.zst
+
+# Serve compressed file (auto-decompresses)
 moxing serve model.gguf.zst
 
-# 查看缓存大小
-moxing compress cache --size
+# Split large files
+moxing compress split model.gguf --size 512  # 512 MB chunks
 
-# 清理缓存
+# Merge back
+moxing compress merge "model.gguf-part-*" merged.gguf
+
+# Manage cache
+moxing compress cache --size
 moxing compress cache --clear
 ```
 
-### 分割大文件
+## Performance
+
+On Apple M4 with `carstenuhlig/omnicoder-9b`:
+
+| Framework | Speed |
+|-----------|-------|
+| Ollama | ~10 tokens/s |
+| MoXing | ~15 tokens/s |
+
+Results vary by model and hardware. MoXing removes Ollama's abstraction layer for direct llama.cpp execution.
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `MOXING_BINARY_SOURCE` | Binary source: `github`, `modelscope`, `auto` |
+| `MOXING_BINARY_MIRROR` | Custom binary mirror URL |
+| `MOXING_NO_UPDATE_CHECK` | Skip binary update check (set to `1`) |
+
+## Building from Source
+
+### Build Wheel
 
 ```bash
-# 分割成 512MB 的块
-moxing compress split model.gguf --size 512
-
-# 合并回单文件
-moxing compress merge model.gguf-part-aa merged.gguf
+./generate_wheel.sh --version 0.1.9
 ```
 
-## 工作原理
+### Build Binaries
 
-MoXing 读取 Ollama 的 GGUF 文件，用 llama.cpp 运行。
+```bash
+# Build all available backends
+./generate_binaries.sh
+
+# Build specific backend
+./generate_binaries.sh --backend cuda
+
+# Build specific llama.cpp version
+./generate_binaries.sh --version b8468
+```
+
+### Upload
+
+```bash
+./upload_binaries.sh  # Upload to GitHub
+./upload_pypi.sh      # Upload to PyPI
+```
+
+## How It Works
 
 ```
-Ollama manifest -> GGUF blob -> llama.cpp -> OpenAI API
+User Request → MoXing → llama.cpp (GPU accelerated) → OpenAI API Response
+                  ↓
+           Auto-download model if needed
+                  ↓
+           Auto-download binaries if needed
 ```
 
-压缩文件会自动解压到缓存：
+Compressed files are transparently decompressed:
 
 ```
-model.gguf.zst -> ~/.cache/moxing/decompressed/model.gguf -> llama.cpp
+model.gguf.zst → ~/.cache/moxing/decompressed/model.gguf → llama.cpp
 ```
 
-## 兼容性
+## Compatibility
 
-### 已验证成功
-
+**Tested Models:**
+- Qwen2.5 series
+- Llama 3.x series
+- Mistral series
+- Phi-3 series
 - carstenuhlig/omnicoder-9b
-- Qwen2.5 系列
-- Llama 3.x 系列
-- Mistral 系列
 
-### 已知不成功
+**Try your model directly - if it works with llama.cpp, it works with MoXing.**
 
-- lfm2.5-thinking
+## Troubleshooting
 
-**直接尝试你的模型，能跑就跑，不能跑就用 Ollama。**
+```bash
+# Check system status
+moxing diagnose
 
-## CLI 命令
+# Check binary version
+moxing --version
 
-### Ollama 集成
+# Re-download binaries
+moxing download-binaries --force
 
-| 命令 | 说明 |
-|------|------|
-| `moxing ollama list` | 列出 Ollama 模型 |
-| `moxing ollama serve <model>` | 运行模型 |
-| `moxing ollama info <model>` | 查看模型详情 |
-| `moxing serve <model.gguf>` | 运行 GGUF 文件 |
-
-### 压缩命令
-
-| 命令 | 说明 |
-|------|------|
-| `moxing compress pack <file>` | 压缩 GGUF 文件 |
-| `moxing compress unpack <file>` | 解压文件 |
-| `moxing compress cache --size` | 查看缓存大小 |
-| `moxing compress cache --clear` | 清理缓存 |
-| `moxing compress split <file>` | 分割文件 |
-| `moxing compress merge <pattern> <output>` | 合并文件 |
-
-### 其他命令
-
-| 命令 | 说明 |
-|------|------|
-| `moxing bench <model>` | 性能测试 |
-| `moxing check <model>` | 检查兼容性 |
-| `moxing devices` | 查看可用 GPU |
+# Clear all caches
+moxing clear-cache --all
+```
 
 ## License
 
-MIT
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Contributing
+
+Contributions welcome! Please open an issue or PR on GitHub.
+
+## Links
+
+- [GitHub Repository](https://github.com/cycleuser/MoXing)
+- [PyPI Package](https://pypi.org/project/moxing/)
+- [Issue Tracker](https://github.com/cycleuser/MoXing/issues)
