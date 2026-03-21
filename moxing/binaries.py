@@ -1,31 +1,16 @@
 """
 Binary management for moxing.
 
-Supports two distribution modes:
-
-1. Platform-specific wheels (recommended):
-   - moxing-0.1.6-py3-none-linux_x86_64_cpu.whl
-   - moxing-0.1.6-py3-none-win_amd64_cuda.whl
-   - Each wheel contains only one platform's binaries
-   - Smaller downloads, faster installs
-
-2. Universal wheel with all platforms:
-   - moxing-0.1.6-py3-none-any.whl
-   - Contains all platform binaries
-   - Larger but works everywhere
+Binaries are downloaded on first use from GitHub releases:
+- https://github.com/cycleuser/moxing/releases
 
 Binary loading priority:
     1. Bundled binaries: moxing/bin/{os}-{arch}-{backend}/
     2. Cached binaries: ~/.cache/moxing/binaries/{os}-{arch}-{backend}/
-    3. Runtime download from GitHub
+    3. Runtime download
 
-Install examples:
-    pip install moxing              # Auto-detect best backend
-    pip install moxing[cuda]        # Force CUDA backend
-    pip install moxing[vulkan]      # Force Vulkan backend
-    pip install moxing[metal]       # Force Metal backend (macOS)
-    pip install moxing[rocm]        # Force ROCm backend (AMD)
-    pip install moxing[cpu]         # Force CPU backend
+Environment variables:
+    MOXING_BINARY_MIRROR    - Custom mirror URL (optional)
 """
 
 import os
@@ -50,7 +35,7 @@ from rich.progress import Progress, BarColumn, DownloadColumn, TransferSpeedColu
 console = Console()
 
 
-LLAMA_CPP_REPO = "ggml-org/llama.cpp"
+MOXING_REPO = "cycleuser/moxing"
 CACHE_DIR = Path.home() / ".cache" / "moxing" / "binaries"
 BIN_DIR = Path(__file__).parent / "bin"
 
@@ -344,7 +329,7 @@ class BinaryManager:
     
     def get_latest_release(self) -> dict:
         """Get latest release info from GitHub API."""
-        url = f"https://api.github.com/repos/{LLAMA_CPP_REPO}/releases/latest"
+        url = f"https://api.github.com/repos/{MOXING_REPO}/releases/latest"
         req = Request(url, headers={
             "Accept": "application/vnd.github.v3+json",
             "User-Agent": "moxing"
@@ -355,95 +340,63 @@ class BinaryManager:
     
     def find_asset_for_platform(self, assets: List[dict]) -> Optional[dict]:
         """Find the appropriate asset for current platform and backend."""
-        os_name = PlatformDetector.get_os()
-        arch = PlatformDetector.get_arch()
-        backend = self.backend
-        
-        platform_patterns = {
-            "windows": ["win", "windows"],
-            "linux": ["linux", "ubuntu"],
-            "darwin": ["macos", "darwin"],
-        }
-        
-        backend_patterns = {
-            "cuda": ["cuda", "cu"],
-            "vulkan": ["vulkan"],
-            "rocm": ["rocm", "hip"],
-            "metal": ["metal"],
-            "cpu": ["cpu"],
-        }
-        
-        patterns = platform_patterns.get(os_name, [])
-        b_pats = backend_patterns.get(backend, [])
+        platform_backend = f"{self.platform_name}-{self.backend}"
         
         for asset in assets:
             name = asset["name"].lower()
-            
-            if not any(p in name for p in patterns):
-                continue
-            
-            if os_name == "darwin":
-                if arch == "arm64" and "arm64" not in name:
-                    continue
-                if arch == "x64" and "arm64" in name:
-                    continue
-            elif backend == "cuda":
-                if "cudart" in name:
+            if platform_backend.replace("-", "_") in name or platform_backend in name:
+                if name.endswith((".zip", ".tar.gz", ".tgz")):
                     return asset
-            elif b_pats and not any(p in name for p in b_pats):
-                continue
-            
-            if name.endswith((".zip", ".tar.gz", ".tgz")):
-                return asset
         
         return None
     
     def download_binaries(self, force: bool = False, quiet: bool = False) -> Path:
-        """Download binaries from GitHub release."""
+        """Download binaries from moxing GitHub releases."""
         
         if not force and self.has_binaries():
             if not quiet:
                 console.print("[green]Binaries already available[/green]")
             return self.get_cache_dir()
         
-        if not quiet:
-            console.print("[blue]Fetching llama.cpp release info...[/blue]")
+        custom_mirror = os.environ.get("MOXING_BINARY_MIRROR", "")
         
-        try:
+        if custom_mirror:
+            download_url = f"{custom_mirror}/{self.platform_name}-{self.backend}.tar.gz"
+            asset_name = f"{self.platform_name}-{self.backend}.tar.gz"
+            tag = "custom"
+        else:
+            if not quiet:
+                console.print("[blue]Fetching moxing release info...[/blue]")
+            
             release = self.get_latest_release()
             tag = release["tag_name"]
-            
-            if not quiet:
-                console.print(f"[blue]Found release: {tag}[/blue]")
-                console.print(f"[blue]Backend: {self.backend}[/blue]")
-            
             asset = self.find_asset_for_platform(release["assets"])
             
             if not asset:
                 raise RuntimeError(f"No binary found for {self.platform_name} ({self.backend})")
             
-            if not quiet:
-                console.print(f"[blue]Downloading: {asset['name']}[/blue]")
-            
-            cache_dir = self.get_cache_dir()
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            
-            with tempfile.TemporaryDirectory() as tmpdir:
-                archive_path = Path(tmpdir) / asset["name"]
-                
-                self._download_file(asset["browser_download_url"], archive_path, quiet)
-                
-                self._extract_binaries(archive_path, cache_dir, quiet)
-            
-            (cache_dir / "VERSION").write_text(f"{tag}\n{self.backend}\n")
-            
-            if not quiet:
-                console.print(f"[green]Binaries installed to: {cache_dir}[/green]")
-            
-            return cache_dir
-            
-        except Exception as e:
-            raise RuntimeError(f"Failed to download binaries: {e}")
+            download_url = asset["browser_download_url"]
+            asset_name = asset["name"]
+        
+        if not quiet:
+            console.print(f"[blue]Release: {tag}[/blue]")
+            console.print(f"[blue]Backend: {self.backend}[/blue]")
+            console.print(f"[blue]Downloading: {asset_name}[/blue]")
+        
+        cache_dir = self.get_cache_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive_path = Path(tmpdir) / asset_name
+            self._download_file(download_url, archive_path, quiet)
+            self._extract_binaries(archive_path, cache_dir, quiet)
+        
+        (cache_dir / "VERSION").write_text(f"{tag}\n{self.backend}\n")
+        
+        if not quiet:
+            console.print(f"[green]Binaries installed to: {cache_dir}[/green]")
+        
+        return cache_dir
     
     def _download_file(self, url: str, dest: Path, quiet: bool = False):
         """Download a file with progress."""

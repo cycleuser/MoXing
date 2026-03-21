@@ -25,31 +25,12 @@ pytest -x --tb=short
 ### Building the Package
 
 ```bash
-# Build all platform-backend wheels
+# Build wheel for PyPI (small, ~54 KB, downloads binaries on first use)
 python scripts/build_platform_wheels.py
 
-# Build specific wheel(s)
-python scripts/build_platform_wheels.py --platform linux-x64-vulkan
-python scripts/build_platform_wheels.py --platform windows-x64-cuda,darwin-arm64-metal
-
-# Download binaries first, then build
-python scripts/build_platform_wheels.py --download
-
-# List available wheels
-python scripts/build_platform_wheels.py --list
+# Upload to PyPI
+twine upload dist/*.whl
 ```
-
-### Wheel Sizes
-
-| Wheel | Size |
-|-------|------|
-| linux-x64-cpu | 18 MB |
-| linux-x64-vulkan | 34 MB |
-| linux-x64-rocm | 133 MB |
-| windows-x64-cpu | 17 MB |
-| windows-x64-cuda | 379 MB |
-| windows-x64-vulkan | 33 MB |
-| darwin-arm64-metal | 14 MB |
 
 ### CLI Commands (for testing)
 
@@ -58,31 +39,45 @@ moxing devices
 moxing download Tesslate/OmniCoder-9B-GGUF -q Q4_K_M
 moxing serve ./model.gguf -p 8080
 moxing bench ./model.gguf
-moxing speed ./model.gguf
 ```
 
 ## Distribution
 
-MoXing uses **one wheel per platform-backend** for minimal download sizes:
+MoXing uses a **small wheel** (~54 KB) that downloads binaries on first use:
 
 ```bash
-# Install specific wheel
-pip install ./moxing-0.1.7-py3-none-linux_x64_vulkan.whl
-pip install ./moxing-0.1.7-py3-none-windows_x64_cuda.whl
-pip install ./moxing-0.1.7-py3-none-darwin_arm64_metal.whl
+pip install moxing
+moxing serve model.gguf  # Downloads binaries automatically
 ```
 
-**Backend Availability**:
+### Binary Download Sources
+
+Binaries are downloaded from multiple sources (tried in order):
+1. **ModelScope** (China mirror, fast in mainland China)
+2. **GitHub** (global)
+
+**Environment variables**:
+```bash
+MOXING_BINARY_SOURCE=github     # Force GitHub only
+MOXING_BINARY_SOURCE=modelscope # Force ModelScope only
+MOXING_BINARY_SOURCE=auto       # Try ModelScope first, then GitHub (default)
+MOXING_BINARY_MIRROR=URL        # Custom mirror URL
+```
+
+### Backend Availability
+
 | Platform | CPU | CUDA | Vulkan | ROCm | Metal |
 |----------|-----|------|--------|------|-------|
-| Linux x64 | ✅ | ❌ system | ✅ | ✅ | - |
-| Windows x64 | ✅ | ✅ bundled | ✅ | - | - |
+| Linux x64 | ✅ | ✅ | ✅ | ✅ | - |
+| Windows x64 | ✅ | ✅ | ✅ | - | - |
 | macOS ARM64 | ✅ | - | - | - | ✅ |
 
-**Notes**:
-- Linux CUDA requires system CUDA installation (not bundled)
-- Windows CUDA includes runtime (~379MB)
-- Each wheel contains only ONE backend's binaries
+### Upload Binaries to ModelScope
+
+```bash
+pip install modelscope
+python scripts/upload_to_modelscope.py --token YOUR_TOKEN
+```
 
 ## Code Style Guidelines
 
@@ -106,18 +101,6 @@ from moxing.server import LlamaServer
 from moxing.device import DeviceDetector
 ```
 
-### Module Structure
-
-Each module should start with a docstring:
-
-```python
-"""
-Brief description of the module.
-
-More detailed explanation if needed.
-"""
-```
-
 ### Type Hints
 
 Use type hints for all function signatures:
@@ -133,55 +116,14 @@ def download(
 
 Use `Optional[T]` for optional parameters, not `T | None` (Python 3.8 compatibility).
 
-### Data Classes
-
-Use `@dataclass` for data structures:
-
-```python
-from dataclasses import dataclass, field
-
-@dataclass
-class ModelInfo:
-    name: str
-    repo: str
-    filename: str
-    size_bytes: int = 0
-    local_path: Optional[Path] = None
-    
-    @property
-    def size_gb(self) -> float:
-        return self.size_bytes / (1024 ** 3)
-```
-
-### Enums
-
-Use `Enum` for fixed sets of values:
-
-```python
-from enum import Enum
-
-class BackendType(Enum):
-    CUDA = "cuda"
-    VULKAN = "vulkan"
-    ROCM = "rocm"
-    METAL = "metal"
-    CPU = "cpu"
-```
-
 ### Error Handling
 
 - Raise specific exceptions with helpful messages
 - Use try/except with specific exception types
-- Log warnings for non-critical issues
 
 ```python
 if not model_path.exists():
     raise FileNotFoundError(f"Model not found: {model_path}")
-
-try:
-    result = subprocess.run([str(binary), "--list-devices"], ...)
-except Exception as e:
-    console.print(f"[yellow]Warning: Device detection failed: {e}[/yellow]")
 ```
 
 ### Console Output
@@ -190,55 +132,21 @@ Use `rich.Console` for all user-facing output:
 
 ```python
 from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-
 console = Console()
-
 console.print("[green]Success![/green]")
 console.print("[red]Error: ...[/red]")
-console.print("[yellow]Warning: ...[/yellow]")
-console.print("[blue]Info: ...[/blue]")
 ```
 
 ### Naming Conventions
 
 - **Classes**: PascalCase (`LlamaServer`, `DeviceDetector`)
 - **Functions/Methods**: snake_case (`get_best_device`, `download_model`)
-- **Constants**: UPPER_SNAKE_CASE (`DEFAULT_MODEL_DIR`, `HF_API`)
-- **Private methods**: prefix with underscore (`_build_args`, `_detect_source`)
-- **Module-level singletons**: prefix with underscore (`_binary_manager`)
-
-### File Operations
-
-Use `pathlib.Path` for all file operations:
-
-```python
-from pathlib import Path
-
-model_path = Path(model).resolve()
-if not model_path.exists():
-    raise FileNotFoundError(...)
-
-output.parent.mkdir(parents=True, exist_ok=True)
-```
-
-### Context Managers
-
-Implement `__enter__` and `__exit__` for resources:
-
-```python
-class LlamaServer:
-    def __enter__(self):
-        return self.start()
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.stop()
-```
+- **Constants**: UPPER_SNAKE_CASE (`DEFAULT_MODEL_DIR`)
+- **Private methods**: prefix with underscore (`_build_args`)
 
 ### CLI Commands
 
-Use `typer` for CLI commands with rich formatting:
+Use `typer` for CLI commands:
 
 ```python
 import typer
@@ -246,46 +154,9 @@ import typer
 @app.command()
 def serve(
     model: str = typer.Argument(..., help="Model path"),
-    port: int = typer.Option(8080, "-p", "--port", help="Server port"),
+    port: int = typer.Option(8080, "-p", "--port"),
 ):
     """Start the llama.cpp server."""
-```
-
-### Docstrings
-
-Use descriptive docstrings for public APIs:
-
-```python
-def get_best_device(self, model_size_gb: float = 0) -> DeviceConfig:
-    """Get the best device configuration for the given model size.
-    
-    Args:
-        model_size_gb: Size of the model in gigabytes.
-        
-    Returns:
-        DeviceConfig with optimal settings.
-    """
-```
-
-### Testing Patterns
-
-When adding tests, follow pytest conventions:
-
-```python
-import pytest
-from moxing.device import DeviceDetector, BackendType
-
-class TestDeviceDetector:
-    def test_detect_returns_list(self):
-        detector = DeviceDetector()
-        devices = detector.detect()
-        assert isinstance(devices, list)
-    
-    def test_cpu_fallback(self, mocker):
-        mocker.patch('subprocess.run', side_effect=Exception("error"))
-        detector = DeviceDetector()
-        devices = detector.detect()
-        assert devices[0].backend == BackendType.CPU
 ```
 
 ## Project Structure
@@ -300,9 +171,10 @@ moxing/
     models.py        # Model downloading (HF, ModelScope)
     runner.py        # AutoRunner for easy usage
     benchmark.py     # Performance benchmarking
-    binaries.py      # Binary management
-    bin/             # Pre-built binaries (one subdir per platform-backend)
+    binaries.py      # Binary management (multi-source download)
+    bin/             # Pre-built binaries (for development)
         linux-x64-cpu/
+        linux-x64-cuda/
         linux-x64-vulkan/
         linux-x64-rocm/
         windows-x64-cpu/
@@ -311,9 +183,8 @@ moxing/
         darwin-arm64-metal/
 
 scripts/
-    build_platform_wheels.py  # Build platform-specific wheels
-    bundle_all_binaries.py    # Download all binaries
-    download_binaries.sh      # Shell script for offline download
+    build_platform_wheels.py  # Build wheel for PyPI
+    upload_to_modelscope.py   # Upload binaries to ModelScope
 ```
 
 ## Important Notes
@@ -321,8 +192,6 @@ scripts/
 - Python 3.8+ compatibility required
 - Use `Optional[T]` instead of `T | None` for type hints
 - All external dependencies must be in `pyproject.toml`
-- Handle cross-platform differences (Windows, Linux, macOS)
-- Use `sys.platform` checks for platform-specific code
-- Each wheel contains ONE platform-backend combination
-- Windows CUDA wheel includes CUDA runtime (~379MB)
-- Linux CUDA requires system CUDA installation
+- Wheel is small (~54 KB), binaries download on first use
+- ModelScope mirror for fast downloads in China
+- Linux CUDA binaries require system CUDA installation
