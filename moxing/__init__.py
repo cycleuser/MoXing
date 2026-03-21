@@ -24,7 +24,7 @@ Quick start:
         pass
 """
 
-__version__ = "0.1.8"
+__version__ = '0.1.9'
 
 from moxing.client import Client, ChatCompletion, Message
 from moxing.server import LlamaServer, ServerConfig, GPUInfo
@@ -39,7 +39,9 @@ from moxing.runner import (
     AutoRunner, RunConfig, quick_run, quick_server
 )
 from moxing.binaries import (
-    BinaryManager, get_binary_manager, ensure_binaries, get_server_binary
+    BinaryManager, get_binary_manager, ensure_binaries, get_server_binary,
+    check_binary_version, get_latest_llama_cpp_version, skip_update_forever,
+    clear_skip_update
 )
 from moxing.gguf_compress import (
     MultiCompressor, TransparentDecompressor, GGUFSplitter,
@@ -84,6 +86,10 @@ __all__ = [
     "get_binary_manager",
     "ensure_binaries",
     "get_server_binary",
+    "check_binary_version",
+    "get_latest_llama_cpp_version",
+    "skip_update_forever",
+    "clear_skip_update",
     
     # Compression
     "GGUFCompressor",
