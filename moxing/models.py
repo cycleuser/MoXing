@@ -248,7 +248,11 @@ class ModelDownloader:
             raise FileNotFoundError(f"No GGUF files found in {repo}")
         
         if filename:
-            matching = [f for f in files if f[0] == filename or f[0].endswith(filename)]
+            if "*" in filename:
+                pattern = filename.replace("*", "").lower()
+                matching = [f for f in files if pattern in f[0].lower()]
+            else:
+                matching = [f for f in files if f[0] == filename or f[0].endswith(filename)]
             if not matching:
                 raise FileNotFoundError(f"File not found: {filename}")
             filename, size = matching[0]

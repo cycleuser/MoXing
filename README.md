@@ -1,247 +1,122 @@
-# moxing (模型)
+# MoXing (模型)
 
-Python wrapper for llama.cpp - OpenAI API compatible LLM backend with automatic GPU detection and model downloading.
+直接运行 Ollama 模型，有时更快。支持 GGUF 压缩节省硬盘空间。
 
-**moxing** (模型) means "model" in Chinese. A simple, unified interface for running LLMs locally.
-
-## Features
-
-- **Auto GPU Detection**: Automatically detects and configures the best GPU backend (Vulkan, CUDA, ROCm, Metal)
-- **Model Downloading**: Download GGUF models from HuggingFace and ModelScope
-- **OpenAI API Compatible**: Drop-in replacement for OpenAI API
-- **Function Calling**: Support for tools and function calling
-- **Pre-built Binaries**: Automatically downloads pre-built llama.cpp binaries
-- **Benchmark**: Measure tokens/second performance like ollama
-
-## Installation
+## 安装
 
 ```bash
 pip install moxing
 ```
 
-## Quick Start
-
-### Step 1: Download a Model
-
-Using ModelScope CLI (recommended for users in China):
+## 使用
 
 ```bash
-# Install modelscope
-pip install modelscope
+# 查看 Ollama 模型
+moxing ollama list
 
-# Download OmniCoder-9B GGUF model
-modelscope download --model Tesslate/OmniCoder-9B-GGUF \
-    omnicoder-9b-q4_k_m.gguf \
-    --local_dir ./models
+# 运行模型
+moxing ollama serve carstenuhlig/omnicoder-9b
+
+# 交互式选择
+moxing ollama list --select
 ```
 
-Or using moxing's built-in downloader:
+## 性能对比
+
+Apple M4 上测试 `carstenuhlig/omnicoder-9b`：
+
+| 框架 | 速度 |
+|------|------|
+| Ollama | ~10 tokens/s |
+| MoXing | ~15 tokens/s |
+
+## GGUF 压缩
+
+压缩 GGUF 文件以节省硬盘空间。虽然 GGUF 已量化，压缩率约 3-5%，但多模型时节省可观。
 
 ```bash
-moxing download Tesslate/OmniCoder-9B-GGUF -q Q4_K_M
+# 压缩 GGUF 文件
+moxing compress pack model.gguf
+
+# 运行压缩后的文件（自动解压）
+moxing serve model.gguf.zst
+
+# 查看缓存大小
+moxing compress cache --size
+
+# 清理缓存
+moxing compress cache --clear
 ```
 
-### Step 2: List GPU Devices
+### 分割大文件
 
 ```bash
-moxing devices
+# 分割成 512MB 的块
+moxing compress split model.gguf --size 512
+
+# 合并回单文件
+moxing compress merge model.gguf-part-aa merged.gguf
 ```
 
-Output:
+## 工作原理
+
+MoXing 读取 Ollama 的 GGUF 文件，用 llama.cpp 运行。
+
 ```
-Available Devices
-+----------------------------------------------------------------+
-| #   | Name                 | Backend | Memory | Free  | Vendor |
-|-----+----------------------+---------+--------+-------+--------|
-| 0   | AMD Radeon RX590 GME | vulkan  | 8.0GB  | 7.2GB | amd    |
-+----------------------------------------------------------------+
+Ollama manifest -> GGUF blob -> llama.cpp -> OpenAI API
 ```
 
-### Step 3: Run Inference
+压缩文件会自动解压到缓存：
 
-```bash
-# Quick speed test
-moxing speed ./models/omnicoder-9b-q4_k_m.gguf
-
-# Benchmark performance
-moxing bench ./models/omnicoder-9b-q4_k_m.gguf
-
-# Interactive chat
-moxing chat ./models/omnicoder-9b-q4_k_m.gguf
+```
+model.gguf.zst -> ~/.cache/moxing/decompressed/model.gguf -> llama.cpp
 ```
 
-### Step 4: Start OpenAI-Compatible Server
+## 兼容性
 
-```bash
-moxing serve ./models/omnicoder-9b-q4_k_m.gguf -p 8080
-```
+### 已验证成功
 
-Now you can use OpenAI API:
+- carstenuhlig/omnicoder-9b
+- Qwen2.5 系列
+- Llama 3.x 系列
+- Mistral 系列
 
-```python
-from openai import OpenAI
+### 已知不成功
 
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="none")
+- lfm2.5-thinking
 
-response = client.chat.completions.create(
-    model="llama",
-    messages=[{"role": "user", "content": "Write a Python function to sort a list"}]
-)
-print(response.choices[0].message.content)
-```
+**直接尝试你的模型，能跑就跑，不能跑就用 Ollama。**
 
-## CLI Commands
+## CLI 命令
 
-| Command | Description |
-|---------|-------------|
-| `moxing serve` | Start OpenAI-compatible server |
-| `moxing run` | Run inference with a model |
-| `moxing chat` | Interactive chat with a model |
-| `moxing bench` | Benchmark model performance |
-| `moxing speed` | Quick speed test |
-| `moxing info` | Show model info and estimates |
-| `moxing download` | Download a model |
-| `moxing models` | List available models |
-| `moxing devices` | List GPU devices |
-| `moxing diagnose` | Diagnose system setup |
+### Ollama 集成
 
-## Python API
+| 命令 | 说明 |
+|------|------|
+| `moxing ollama list` | 列出 Ollama 模型 |
+| `moxing ollama serve <model>` | 运行模型 |
+| `moxing ollama info <model>` | 查看模型详情 |
+| `moxing serve <model.gguf>` | 运行 GGUF 文件 |
 
-### Quick Inference
+### 压缩命令
 
-```python
-from moxing import quick_run, quick_server, Client
+| 命令 | 说明 |
+|------|------|
+| `moxing compress pack <file>` | 压缩 GGUF 文件 |
+| `moxing compress unpack <file>` | 解压文件 |
+| `moxing compress cache --size` | 查看缓存大小 |
+| `moxing compress cache --clear` | 清理缓存 |
+| `moxing compress split <file>` | 分割文件 |
+| `moxing compress merge <pattern> <output>` | 合并文件 |
 
-# Quick inference
-result = quick_run("./models/omnicoder-9b-q4_k_m.gguf", "Write a haiku about coding")
-print(result)
-```
+### 其他命令
 
-### Server with Auto-Configuration
-
-```python
-from moxing import quick_server, Client
-
-with quick_server("./models/omnicoder-9b-q4_k_m.gguf") as server:
-    client = Client(server.base_url)
-    
-    response = client.chat.completions.create(
-        model="llama",
-        messages=[{"role": "user", "content": "Hello!"}]
-    )
-    print(response.choices[0]["message"]["content"])
-```
-
-### Auto GPU Detection
-
-```python
-from moxing import DeviceDetector
-
-# Detect available GPUs
-detector = DeviceDetector()
-devices = detector.detect()
-for device in devices:
-    print(f"{device.name} ({device.backend.value}, {device.memory_gb:.1f}GB)")
-
-# Get optimal configuration
-config = detector.get_best_device(model_size_gb=5.0)
-print(f"Best device: {config.device.name}")
-print(f"Recommended GPU layers: {config.n_gpu_layers}")
-```
-
-### Model Download
-
-```python
-from moxing import ModelDownloader
-
-downloader = ModelDownloader()
-
-# Download from HuggingFace
-path = downloader.download("Qwen/Qwen2.5-7B-Instruct-GGUF", "Q4_K_M.gguf")
-
-# Download from ModelScope
-path = downloader.download(
-    "Tesslate/OmniCoder-9B-GGUF",
-    "omnicoder-9b-q4_k_m.gguf",
-    source="modelscope"
-)
-```
-
-## Popular Models
-
-| Name | Description | Sizes |
-|------|-------------|-------|
-| OmniCoder-9B | Code generation model | Q4_K_M, Q5_K_M, Q8_0 |
-| llama-3.2-3b | Llama 3.2 3B | Q4_K_M, Q5_K_M, Q8_0 |
-| qwen2.5-7b | Qwen 2.5 7B | Q4_K_M, Q5_K_M, Q8_0 |
-| deepseek-coder-6.7b | DeepSeek Coder | Q4_K_M, Q5_K_M, Q8_0 |
-
-## GPU Backends
-
-| Backend | Platforms | Description |
-|---------|-----------|-------------|
-| Vulkan | Windows, Linux | Cross-platform GPU API, works on AMD, Intel, NVIDIA |
-| CUDA | Windows, Linux | NVIDIA GPUs |
-| ROCm | Linux | AMD GPUs |
-| Metal | macOS | Apple Silicon |
-| CPU | All | Fallback, no GPU required |
-
-## Function Calling
-
-```python
-from moxing import Client, LlamaServer
-
-tools = [{
-    "type": "function",
-    "function": {
-        "name": "get_weather",
-        "description": "Get weather for a location",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "location": {"type": "string"}
-            }
-        }
-    }
-}]
-
-with LlamaServer("./models/omnicoder-9b-q4_k_m.gguf") as server:
-    client = Client(server.base_url)
-    
-    response = client.chat.completions.create(
-        model="llama",
-        messages=[{"role": "user", "content": "What's the weather in Tokyo?"}],
-        tools=tools
-    )
-    
-    if response.choices[0]["message"].get("tool_calls"):
-        print("Model wants to call:", response.choices[0]["message"]["tool_calls"])
-```
-
-## Performance Example
-
-On AMD Radeon RX590 GME (8GB VRAM) with Vulkan backend:
-
-| Model | Size | Speed |
-|-------|------|-------|
-| TinyLLama Q4_K_M | 0.62 GB | ~90 t/s |
-| OmniCoder-9B Q4_K_M | 5.34 GB | ~18 t/s |
-
-![MoXing Running on AMD GPU](images/screenshot.png)
-
-## Requirements
-
-- Python 3.8+
-- Vulkan SDK (for Vulkan backend)
-- CUDA Toolkit (for CUDA backend)
-- ROCm (for ROCm backend)
+| 命令 | 说明 |
+|------|------|
+| `moxing bench <model>` | 性能测试 |
+| `moxing check <model>` | 检查兼容性 |
+| `moxing devices` | 查看可用 GPU |
 
 ## License
 
-MIT License - same as llama.cpp
-
-## Links
-
-- [llama.cpp](https://github.com/ggml-org/llama.cpp)
-- [OmniCoder-9B](https://modelscope.cn/models/Tesslate/OmniCoder-9B-GGUF)
-- [Issues](https://github.com/ggml-org/llama.cpp/issues)
+MIT

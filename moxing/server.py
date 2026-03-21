@@ -44,34 +44,15 @@ class ServerConfig:
 
 
 def _find_binary() -> Path:
-    """Find llama-server binary, checking multiple locations."""
-    binary_name = "llama-server.exe" if sys.platform == "win32" else "llama-server"
+    """Find llama-server binary using BinaryManager."""
+    from moxing.binaries import get_binary_manager
     
-    locations = [
-        Path(__file__).parent / "bin" / ("windows" if sys.platform == "win32" else ("darwin" if sys.platform == "darwin" else "linux")) / binary_name,
-        Path.home() / ".cache" / "moxing" / "binaries" / ("windows" if sys.platform == "win32" else ("darwin" if sys.platform == "darwin" else "linux")) / binary_name,
-    ]
+    manager = get_binary_manager()
+    if not manager.is_downloaded():
+        console.print("[blue]Downloading llama.cpp binaries...[/blue]")
+        manager.download_binaries()
     
-    for loc in locations:
-        if loc.exists():
-            return loc
-    
-    try:
-        from moxing.binaries import get_binary_manager
-        manager = get_binary_manager()
-        if not manager.is_downloaded():
-            console.print("[blue]Downloading llama.cpp binaries...[/blue]")
-            manager.download_binaries()
-        return manager.get_binary_path("llama-server")
-    except Exception as e:
-        pass
-    
-    raise FileNotFoundError(
-        f"llama-server binary not found.\n"
-        f"Run 'moxing download-binaries' to download pre-built binaries,\n"
-        f"or use 'moxing build' to compile from source.\n"
-        f"Searched locations:\n" + "\n".join(f"  - {loc}" for loc in locations)
-    )
+    return manager.get_binary_path("llama-server")
 
 
 class LlamaServer:
@@ -99,7 +80,18 @@ class LlamaServer:
         gpu_backend: str = "auto",
         **kwargs
     ):
-        self.model = Path(model).resolve()
+        model_path = Path(model)
+        
+        # Handle compressed/split GGUF files transparently
+        if model_path.exists():
+            from moxing.gguf_compress import resolve_model_path, is_gguf_compressed
+            if is_gguf_compressed(model_path):
+                console.print("[blue]Detected compressed GGUF, decompressing...[/blue]")
+            resolved_path = resolve_model_path(model_path)
+            self.model = resolved_path.resolve()
+        else:
+            self.model = model_path.resolve()
+        
         self.host = host
         self.port = port
         self.ctx_size = ctx_size
@@ -191,13 +183,49 @@ class LlamaServer:
             args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            cwd=str(self.get_binary_path().parent)
         )
         
         if wait:
             self._wait_for_server(timeout)
+        else:
+            time.sleep(1.0)
+            if self._process.poll() is not None:
+                stdout, stderr = self._process.communicate()
+                console.print(f"\n[red bold]Server failed to start![/red bold]")
+                if stderr:
+                    for line in stderr.strip().split("\n")[-15:]:
+                        if any(kw in line.lower() for kw in ["error", "failed", "warning"]):
+                            console.print(f"[red]{line}[/red]")
+                        else:
+                            console.print(f"[dim]{line}[/dim]")
+                raise RuntimeError("Server failed to start")
+            
+            self._start_monitor()
             
         return self
+    
+    def _start_monitor(self):
+        """Start background thread to monitor server process."""
+        def monitor():
+            while self._process and self._process.poll() is None:
+                time.sleep(0.5)
+            
+            if self._process and self._process.poll() is not None:
+                try:
+                    stdout, stderr = self._process.communicate(timeout=1)
+                    if stderr:
+                        console.print(f"\n[red bold]Server crashed:[/red bold]")
+                        for line in stderr.strip().split("\n")[-10:]:
+                            console.print(f"[red]{line}[/red]")
+                except:
+                    pass
+        
+        monitor_thread = threading.Thread(target=monitor, daemon=True)
+        monitor_thread.start()
     
     def _wait_for_server(self, timeout: int = 60):
         """Wait for server to be ready."""

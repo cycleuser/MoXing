@@ -10,6 +10,7 @@ Features:
 - OpenAI API compatible server
 - Function calling / tool support
 - Multimodal support
+- GGUF compression and transparent decompression
 
 Quick start:
     from moxing import quick_run, quick_server
@@ -23,7 +24,7 @@ Quick start:
         pass
 """
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 from moxing.client import Client, ChatCompletion, Message
 from moxing.server import LlamaServer, ServerConfig, GPUInfo
@@ -40,6 +41,12 @@ from moxing.runner import (
 from moxing.binaries import (
     BinaryManager, get_binary_manager, ensure_binaries, get_server_binary
 )
+from moxing.gguf_compress import (
+    MultiCompressor, TransparentDecompressor, GGUFSplitter,
+    compress_model, resolve_model_path
+)
+
+GGUFCompressor = MultiCompressor  # Alias for backward compatibility
 
 __all__ = [
     # Client
@@ -77,4 +84,12 @@ __all__ = [
     "get_binary_manager",
     "ensure_binaries",
     "get_server_binary",
+    
+    # Compression
+    "GGUFCompressor",
+    "MultiCompressor",
+    "TransparentDecompressor",
+    "GGUFSplitter",
+    "compress_model",
+    "resolve_model_path",
 ]
