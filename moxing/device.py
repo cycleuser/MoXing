@@ -325,3 +325,77 @@ def estimate_model_size_gb(model_path: str) -> float:
         return size / (1024 ** 3)
     except:
         return 0
+
+
+def calculate_optimal_context(
+    model_size_gb: float,
+    available_vram_gb: float,
+    ctx_size_requested: int = 0,
+    vram_buffer_ratio: float = 0.15,
+) -> tuple[int, int, str]:
+    """Calculate optimal context size based on available VRAM.
+    
+    Args:
+        model_size_gb: Model size in GB
+        available_vram_gb: Available VRAM in GB
+        ctx_size_requested: Requested context size (0 = auto)
+        vram_buffer_ratio: Ratio of VRAM to leave free (default 15%)
+    
+    Returns:
+        (ctx_size, n_gpu_layers, notes)
+    """
+    notes = []
+    
+    usable_vram_gb = available_vram_gb * (1 - vram_buffer_ratio)
+    
+    kv_cache_per_1k_ctx_gb = 0.002
+    
+    if model_size_gb >= usable_vram_gb:
+        notes.append(f"Model ({model_size_gb:.1f}GB) exceeds usable VRAM ({usable_vram_gb:.1f}GB)")
+        notes.append("Using CPU offloading for some layers")
+        
+        max_ctx_for_vram = int((usable_vram_gb * 0.3) / kv_cache_per_1k_ctx_gb) * 1024
+        max_ctx = max(2048, min(max_ctx_for_vram, 16384))
+        
+        if ctx_size_requested > 0:
+            ctx = min(ctx_size_requested, max_ctx)
+        else:
+            ctx = max_ctx
+        
+        notes.append(f"Context limited to {ctx}")
+        return ctx, -1, "; ".join(notes)
+    
+    remaining_vram_gb = usable_vram_gb - model_size_gb
+    
+    max_ctx_for_vram = int(remaining_vram_gb / kv_cache_per_1k_ctx_gb) * 1024
+    
+    default_ctx = 4096
+    if remaining_vram_gb >= 4:
+        default_ctx = 16384
+    elif remaining_vram_gb >= 2:
+        default_ctx = 8192
+    elif remaining_vram_gb >= 1:
+        default_ctx = 4096
+    else:
+        default_ctx = 2048
+    
+    if ctx_size_requested > 0:
+        if ctx_size_requested > max_ctx_for_vram:
+            ctx = max_ctx_for_vram
+            notes.append(f"Requested ctx {ctx_size_requested} exceeds VRAM, using {ctx}")
+        else:
+            ctx = ctx_size_requested
+            notes.append(f"Using requested context size: {ctx}")
+    else:
+        ctx = default_ctx
+        notes.append(f"Auto-detected context size: {ctx}")
+    
+    notes.append(f"Model: {model_size_gb:.1f}GB, Free VRAM: {remaining_vram_gb:.1f}GB")
+    
+    return ctx, -1, "; ".join(notes)
+
+
+def get_vram_for_context(ctx_size: int) -> float:
+    """Estimate VRAM needed for given context size (in GB)."""
+    kv_cache_per_1k_ctx_gb = 0.002
+    return ctx_size * kv_cache_per_1k_ctx_gb / 1024
