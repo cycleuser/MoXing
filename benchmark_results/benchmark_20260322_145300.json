@@ -1,0 +1,33 @@
+{
+  "benchmark_date": "2026-03-22T14:53:00.706172",
+  "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU (8GB VRAM)",
+  "results": [
+    {
+      "model": "qwen3:8b",
+      "backend": "ollama",
+      "prompt_tokens_per_sec": 613.18,
+      "generation_tokens_per_sec": 45.67,
+      "total_time_sec": 39.46260738372803,
+      "test_prompt": "is it possible to mixuse rust and python",
+      "timestamp": "2026-03-22T14:51:08.702334"
+    },
+    {
+      "model": "huihui_ai/qwen3-abliterated:8b",
+      "backend": "ollama",
+      "prompt_tokens_per_sec": 663.85,
+      "generation_tokens_per_sec": 47.29,
+      "total_time_sec": 38.821390867233276,
+      "test_prompt": "is it possible to mixuse rust and python",
+      "timestamp": "2026-03-22T14:51:50.792154"
+    },
+    {
+      "model": "carstenuhlig/omnicoder-9b",
+      "backend": "ollama",
+      "prompt_tokens_per_sec": 562.49,
+      "generation_tokens_per_sec": 16.93,
+      "total_time_sec": 63.28927302360535,
+      "test_prompt": "is it possible to mixuse rust and python",
+      "timestamp": "2026-03-22T14:52:57.168519"
+    }
+  ]
+}

@@ -41,6 +41,7 @@ class ServerConfig:
     device: str = "auto"
     verbose: bool = False
     gpu_backend: str = "auto"
+    auto_ctx: bool = True
 
 
 def _find_binary() -> Path:
@@ -74,10 +75,11 @@ class LlamaServer:
         model: str,
         host: str = "127.0.0.1",
         port: int = 8080,
-        ctx_size: int = 4096,
+        ctx_size: int = 0,
         n_gpu_layers: int = -1,
         device: str = "auto",
         gpu_backend: str = "auto",
+        auto_ctx: bool = True,
         **kwargs
     ):
         model_path = Path(model)
@@ -94,15 +96,58 @@ class LlamaServer:
         
         self.host = host
         self.port = port
-        self.ctx_size = ctx_size
+        self._requested_ctx_size = ctx_size
         self.n_gpu_layers = n_gpu_layers
         self.device = device
         self.gpu_backend = gpu_backend
+        self.auto_ctx = auto_ctx
         self.extra_args = kwargs
+        
+        self.ctx_size = ctx_size if ctx_size > 0 else 4096
+        
+        if auto_ctx and ctx_size == 0:
+            self._auto_detect_context()
         
         self._process: Optional[subprocess.Popen] = None
         self._server_thread: Optional[threading.Thread] = None
         self._base_url = f"http://{host}:{port}"
+    
+    def _auto_detect_context(self):
+        """Auto-detect optimal context size based on available VRAM."""
+        from moxing.device import DeviceDetector, estimate_model_size_gb, calculate_optimal_context
+        
+        try:
+            detector = DeviceDetector()
+            devices = detector.detect()
+            
+            model_size_gb = estimate_model_size_gb(str(self.model))
+            
+            gpu_devices = [d for d in devices if d.backend.value != "cpu"]
+            if not gpu_devices:
+                self.ctx_size = 4096
+                return
+            
+            best_device = max(gpu_devices, key=lambda d: d.free_memory_mb)
+            available_vram_gb = best_device.free_memory_gb
+            
+            if available_vram_gb <= 0:
+                available_vram_gb = best_device.memory_gb * 0.8
+            
+            ctx_size, n_gpu_layers, notes = calculate_optimal_context(
+                model_size_gb=model_size_gb,
+                available_vram_gb=available_vram_gb,
+                ctx_size_requested=0,
+            )
+            
+            self.ctx_size = ctx_size
+            if n_gpu_layers != -1:
+                self.n_gpu_layers = n_gpu_layers
+            
+            console.print(f"[dim]Auto-detected context size: {ctx_size} ({notes})[/dim]")
+            
+        except Exception as e:
+            console.print(f"[yellow]Could not auto-detect context: {e}[/yellow]")
+            self.ctx_size = 4096
         
     @staticmethod
     def get_binary_path() -> Path:

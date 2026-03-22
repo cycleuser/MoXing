@@ -1,0 +1,45 @@
+{
+  "benchmark_date": "2026-03-22T18:00:00",
+  "title": "Context Size Impact on Performance",
+  "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU (8GB VRAM)",
+  "test_prompt": "Write a Python function to check if a string is a palindrome",
+  
+  "moxing_results": [
+    {"ctx_size": 2048, "gen_speed": 39.8, "prompt_speed": 306.2},
+    {"ctx_size": 4096, "gen_speed": 40.0, "prompt_speed": 285.0},
+    {"ctx_size": 8192, "gen_speed": 40.3, "prompt_speed": 309.7},
+    {"ctx_size": 16384, "gen_speed": 40.4, "prompt_speed": 307.5},
+    {"ctx_size": 24576, "gen_speed": 40.6, "prompt_speed": 310.1},
+    {"ctx_size": 32768, "gen_speed": 40.0, "prompt_speed": 307.7}
+  ],
+  
+  "ollama_results": [
+    {"ctx_size": "default(32k)", "gen_speed": 15.58, "prompt_speed": 615.36, "kv_cache": "2.2GB", "gpu_layers": 32},
+    {"ctx_size": 2048, "gen_speed": 15.44, "prompt_speed": 623.26},
+    {"ctx_size": 4096, "gen_speed": 15.61, "prompt_speed": 629.57},
+    {"ctx_size": 8192, "gen_speed": 15.47, "prompt_speed": 623.47},
+    {"ctx_size": 16384, "gen_speed": 15.59, "prompt_speed": 622.59},
+    {"ctx_size": 24576, "gen_speed": 15.55, "prompt_speed": 618.63}
+  ],
+  
+  "qwen3_8b_moxing": [
+    {"ctx_size": 4096, "gen_speed": 46.5, "prompt_speed": 232.7},
+    {"ctx_size": 16384, "gen_speed": 46.6, "prompt_speed": 285.3}
+  ],
+  
+  "analysis": {
+    "generation_speed": "MoXing is 2.5x faster than Ollama (40 t/s vs 15.5 t/s) for omnicoder-9b",
+    "prompt_speed": "Ollama is 2x faster than MoXing (620 t/s vs 300 t/s)",
+    "context_impact": "Context size has minimal impact on generation speed",
+    "ollama_default": "Ollama uses 32k context by default, causing partial CPU offloading",
+    "memory_usage": "Ollama offloads 1.3GB to CPU due to limited VRAM with 32k context"
+  },
+  
+  "conclusions": [
+    "Context size (2k-32k) has minimal impact on generation speed for both tools",
+    "MoXing maintains full GPU offloading across all context sizes",
+    "Ollama offloads layers to CPU when context + model exceeds VRAM",
+    "CPU offloading causes 2.5x slowdown in Ollama for omnicoder-9b",
+    "For qwen3:8b, MoXing achieves 46.5 t/s vs Ollama's similar speed when fully on GPU"
+  ]
+}

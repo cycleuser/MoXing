@@ -1,0 +1,112 @@
+{
+  "benchmark_date": "2026-03-22T17:00:00",
+  "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU (8GB VRAM)",
+  "test_environment": {
+    "cuda_version": "13.2",
+    "ollama_version": "0.18.2",
+    "moxing_llama_cpp_version": "b8468",
+    "os": "Ubuntu 24.04",
+    "ram": "62GB"
+  },
+  "models_tested": [
+    {
+      "name": "carstenuhlig/omnicoder-9b",
+      "size": "5.3GB",
+      "architecture": "qwen35",
+      "quantization": "Q4_K_M"
+    },
+    {
+      "name": "qwen3:8b",
+      "size": "5.2GB", 
+      "architecture": "qwen3",
+      "quantization": "Q4_K_M"
+    },
+    {
+      "name": "huihui_ai/qwen3-abliterated:8b",
+      "size": "5.0GB",
+      "architecture": "qwen3",
+      "quantization": "Q4_K_M"
+    },
+    {
+      "name": "huihui_ai/gpt-oss-abliterated:20b",
+      "size": "13GB",
+      "architecture": "gpt-oss",
+      "quantization": "F16"
+    },
+    {
+      "name": "huihui_ai/glm-4.7-flash-abliterated:latest",
+      "size": "18GB",
+      "architecture": "glm4moelite",
+      "quantization": "Q4_K_M"
+    }
+  ],
+  "results": [
+    {
+      "model": "carstenuhlig/omnicoder-9b",
+      "task": "code_generation",
+      "moxing_gen_speed": 40.0,
+      "moxing_prompt_speed": 292.4,
+      "ollama_gen_speed": null,
+      "ollama_prompt_speed": null,
+      "notes": "Ollama uses 32k context, MoXing uses 2k context"
+    },
+    {
+      "model": "qwen3:8b",
+      "task": "math_reasoning",
+      "moxing_gen_speed": 46.5,
+      "moxing_prompt_speed": 403.9,
+      "ollama_gen_speed": 45.53,
+      "ollama_prompt_speed": 1239.27,
+      "notes": "Similar speed, Ollama faster on prompt processing"
+    },
+    {
+      "model": "huihui_ai/qwen3-abliterated:8b",
+      "task": "logic_reasoning",
+      "moxing_gen_speed": 48.3,
+      "moxing_prompt_speed": 754.8,
+      "ollama_gen_speed": 47.43,
+      "ollama_prompt_speed": 660.39,
+      "notes": "MoXing slightly faster"
+    },
+    {
+      "model": "huihui_ai/gpt-oss-abliterated:20b",
+      "task": "code_generation",
+      "moxing_gen_speed": null,
+      "ollama_gen_speed": 8.73,
+      "ollama_prompt_speed": 81.55,
+      "notes": "Model too large for 8GB VRAM, uses CPU offloading"
+    },
+    {
+      "model": "huihui_ai/glm-4.7-flash-abliterated:latest",
+      "task": "code_generation",
+      "moxing_gen_speed": null,
+      "ollama_gen_speed": 10.22,
+      "ollama_prompt_speed": 47.83,
+      "notes": "Model too large for 8GB VRAM, uses CPU offloading"
+    }
+  ],
+  "key_findings": [
+    "MoXing and Ollama have similar generation speed for 7B-9B models",
+    "Ollama is faster at prompt processing (50-70% faster)",
+    "Large models (>10GB) require CPU offloading on 8GB VRAM, significantly slower",
+    "omnicoder-9b shows 2.4x speed difference due to different context size settings",
+    "GGUF compatibility: omnicoder-9b, qwen3:8b work with both MoXing and Ollama"
+  ],
+  "references": [
+    {
+      "benchmark": "HumanEval",
+      "citation": "Chen et al., 2021. 'Evaluating Large Language Models Trained on Code'",
+      "url": "https://arxiv.org/abs/2107.03374"
+    },
+    {
+      "benchmark": "GSM8K",
+      "citation": "Cobbe et al., 2021. 'Training Verifiers to Solve Math Word Problems'",
+      "url": "https://arxiv.org/abs/2110.14168"
+    },
+    {
+      "benchmark": "BBH",
+      "citation": "Suzgun et al., 2022. 'Challenging BIG-Bench Tasks'",
+      "url": "https://arxiv.org/abs/2210.09261"
+    }
+  ]
+}

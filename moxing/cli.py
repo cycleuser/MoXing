@@ -96,7 +96,7 @@ def serve(
     quant: str = typer.Option("Q4_K_M", "-q", "--quant", help="Quantization type"),
     host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
     port: int = typer.Option(8080, "-p", "--port", help="Server port"),
-    ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size"),
+    ctx_size: int = typer.Option(0, "-c", "--ctx-size", help="Context size (0=auto-detect based on VRAM)"),
     source: str = typer.Option("auto", "-s", "--source", help="Model source (huggingface/modelscope/auto)"),
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, llama.cpp, mlx, ollama"),
     auto: bool = typer.Option(True, "--auto/--no-auto", help="Auto-detect best device"),
@@ -1039,21 +1039,17 @@ def ollama_serve(
     model: str = typer.Argument(..., help="Ollama model name (e.g., gemma3:4b)"),
     port: int = typer.Option(8080, "-p", "--port", help="Server port"),
     host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
-    use_native: bool = typer.Option(True, "--native/--ollama", help="Use moxing's llama.cpp (native) or ollama runtime"),
 ):
     """Serve an Ollama model with OpenAI-compatible API.
     
-    By default, uses moxing's llama.cpp binary to run the GGUF file
-    directly for better performance and compatibility.
-    
-    Use --ollama to use ollama's own runtime instead.
+    Uses moxing's llama.cpp to run the model with optimal GPU acceleration.
+    If the Ollama GGUF is incompatible, downloads a compatible version from Hugging Face.
     
     Examples:
         moxing ollama serve gemma3:4b
-        moxing ollama serve gemma3:4b --ollama
+        moxing ollama serve llama3.2:3b
     """
     from moxing.ollama import OllamaClient, get_ollama_model
-    from moxing.gguf_check import diagnose_gguf
     from moxing.server import LlamaServer
     from moxing.device import DeviceDetector
     
@@ -1071,30 +1067,25 @@ def ollama_serve(
         console.print("\n[dim]Run 'moxing ollama list' to see all models[/dim]")
         raise typer.Exit(1)
     
-    gguf_path = client.get_model_gguf_path(model)
+    is_accessible, gguf_path, message = client.check_model_access(model)
     
+    if not is_accessible:
+        console.print(f"[red]Cannot access model '{model}':[/red]")
+        console.print(message)
+        raise typer.Exit(1)
+    
+    gguf_path = _get_compatible_gguf(model, gguf_path, ollama_model.size_gb)
     if not gguf_path:
-        console.print(f"[red]Could not find GGUF file for {model}[/red]")
         raise typer.Exit(1)
     
     console.print(Panel(
         f"[green]Model:[/green] {ollama_model.full_name}\n"
         f"[blue]Size:[/blue] {ollama_model.size_gb:.1f} GB\n"
-        f"[blue]GGUF:[/blue] {gguf_path.name[:40]}...\n"
+        f"[blue]GGUF:[/blue] {gguf_path.name[:50]}...\n"
         f"[yellow]Port:[/yellow] {port}\n"
         f"[magenta]Backend:[/magenta] llama.cpp (moxing)",
         title="Ollama Model"
     ))
-    
-    try:
-        meta = diagnose_gguf(gguf_path)
-        if not meta.is_valid:
-            console.print(f"[yellow]Compatibility warnings:[/yellow]")
-            for err in meta.errors[:3]:
-                console.print(f"  [red]✗[/red] {err}")
-            console.print()
-    except Exception as e:
-        console.print(f"[dim]Could not check compatibility: {e}[/dim]")
     
     detector = DeviceDetector()
     devices = detector.detect()
@@ -1111,6 +1102,7 @@ def ollama_serve(
         title="Configuration"
     ))
     
+    server = None
     try:
         server = LlamaServer(
             model=str(gguf_path),
@@ -1130,25 +1122,182 @@ def ollama_serve(
             title="moxing server"
         ))
         
-        try:
-            server.start(wait=False)
-        except RuntimeError as e:
-            console.print(f"\n[red bold]Failed to start server![/red bold]")
-            console.print(f"[red]{e}[/red]")
+        server.start(wait=False)
+        
+        import time
+        time.sleep(2)
+        
+        if server._process and server._process.poll() is not None:
+            stdout, stderr = server._process.communicate()
+            console.print(f"\n[red bold]Server failed to start![/red bold]")
+            for line in (stderr or "").strip().split("\n")[-15:]:
+                if line.strip():
+                    console.print(f"[red]{line}[/red]")
             raise typer.Exit(1)
         
         while server.is_running():
-            import time
             time.sleep(1)
             
     except KeyboardInterrupt:
         console.print("\n[yellow]Shutting down...[/yellow]")
-        server.stop()
+        if server:
+            server.stop()
     except RuntimeError:
         raise typer.Exit(1)
+
+
+def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float) -> Optional[Path]:
+    """Get a compatible GGUF file, downloading from Hugging Face if Ollama's is incompatible."""
+    from moxing.binaries import get_binary_manager
+    
+    manager = get_binary_manager()
+    if not manager.has_binaries():
+        console.print("[blue]Downloading llama.cpp binaries...[/blue]")
+        manager.download_binaries()
+    
+    llama_cli = manager.get_binary_path("llama-cli")
+    
+    console.print("[dim]Loading GGUF model...[/dim]")
+    
+    incompatible_patterns = [
+        "error loading model",
+        "wrong number of tensors",
+        "wrong shape",
+        "key not found in model",
+        "missing tensor",
+        "failed to load model",
+        "done_getting_tensors",
+    ]
+    
+    stderr = ""
+    try:
+        proc = subprocess.Popen(
+            [str(llama_cli), "-m", str(ollama_gguf), "-n", "1", "-p", "x", "-c", "128"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        try:
+            _, stderr = proc.communicate(timeout=20)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _, stderr = proc.communicate()
+        
+        if stderr:
+            stderr_lower = stderr.lower()
+            is_incompatible = any(p in stderr_lower for p in incompatible_patterns)
+            
+            if is_incompatible:
+                console.print(f"[yellow]⚠ Ollama GGUF is incompatible with llama.cpp[/yellow]")
+                console.print(f"[dim]Ollama uses a custom GGUF format. Downloading compatible version...[/dim]")
+                
+                hf_repo = _get_hf_repo_for_ollama_model(model)
+                if not hf_repo:
+                    console.print(f"[red]No compatible GGUF found on Hugging Face for: {model}[/red]")
+                    console.print(f"[dim]Suggestion: Download manually with:[/dim]")
+                    console.print(f"[cyan]  moxing download <repo>[/cyan]")
+                    console.print(f"[dim]Then serve with: moxing serve <path/to/model.gguf>[/dim]")
+                    return None
+                
+                console.print(f"[blue]Downloading from Hugging Face: {hf_repo}[/blue]")
+                
+                try:
+                    from moxing.models import download_model
+                    gguf_path = download_model(hf_repo)
+                    return gguf_path
+                except Exception as e:
+                    console.print(f"[red]Failed to download: {e}[/red]")
+                    return None
+            
+            console.print(f"[green]✓ GGUF is compatible[/green]")
+            return ollama_gguf
+            
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1)
+        console.print(f"[yellow]⚠ Compatibility check error: {e}[/yellow]")
+    
+    return ollama_gguf
+
+
+def _get_hf_repo_for_ollama_model(model: str) -> Optional[str]:
+    """Map Ollama model name to Hugging Face GGUF repository."""
+    model_lower = model.lower().split(":")[0]
+    
+    OLLAMA_TO_HF_MAP = {
+        "gemma3": "google/gemma-3-4b-it-GGUF",
+        "gemma3:1b": "google/gemma-3-1b-it-GGUF",
+        "gemma3:4b": "google/gemma-3-4b-it-GGUF",
+        "gemma3:12b": "google/gemma-3-12b-it-GGUF",
+        "gemma3:27b": "google/gemma-3-27b-it-GGUF",
+        "gemma2": "google/gemma-2-9b-it-GGUF",
+        "gemma2:2b": "google/gemma-2-2b-it-GGUF",
+        "gemma2:9b": "google/gemma-2-9b-it-GGUF",
+        "gemma2:27b": "google/gemma-2-27b-it-GGUF",
+        "llama3.2": "meta-llama/Llama-3.2-3B-Instruct-GGUF",
+        "llama3.2:1b": "meta-llama/Llama-3.2-1B-Instruct-GGUF",
+        "llama3.2:3b": "meta-llama/Llama-3.2-3B-Instruct-GGUF",
+        "llama3.3": "meta-llama/Llama-3.3-70B-Instruct-GGUF",
+        "llama3.1": "meta-llama/Llama-3.1-8B-Instruct-GGUF",
+        "llama3.1:8b": "meta-llama/Llama-3.1-8B-Instruct-GGUF",
+        "llama3.1:70b": "meta-llama/Llama-3.1-70B-Instruct-GGUF",
+        "llama3": "meta-llama/Llama-3-8B-Instruct-GGUF",
+        "llama3:8b": "meta-llama/Llama-3-8B-Instruct-GGUF",
+        "llama3:70b": "meta-llama/Llama-3-70B-Instruct-GGUF",
+        "qwen2.5": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+        "qwen2.5:0.5b": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+        "qwen2.5:1.5b": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+        "qwen2.5:3b": "Qwen/Qwen2.5-3B-Instruct-GGUF",
+        "qwen2.5:7b": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+        "qwen2.5:14b": "Qwen/Qwen2.5-14B-Instruct-GGUF",
+        "qwen2.5:32b": "Qwen/Qwen2.5-32B-Instruct-GGUF",
+        "qwen2.5:72b": "Qwen/Qwen2.5-72B-Instruct-GGUF",
+        "qwen3": "Qwen/Qwen3-8B-GGUF",
+        "qwen3:0.6b": "Qwen/Qwen3-0.6B-GGUF",
+        "qwen3:1.7b": "Qwen/Qwen3-1.7B-GGUF",
+        "qwen3:4b": "Qwen/Qwen3-4B-GGUF",
+        "qwen3:8b": "Qwen/Qwen3-8B-GGUF",
+        "qwen3:14b": "Qwen/Qwen3-14B-GGUF",
+        "qwen3.5": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+        "qwen3.5:0.8b": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+        "qwen3.5:2b": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+        "qwen3.5:4b": "Qwen/Qwen2.5-3B-Instruct-GGUF",
+        "qwen3.5:9b": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+        "qwen3.5:27b": "Qwen/Qwen2.5-32B-Instruct-GGUF",
+        "mistral": "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
+        "mistral:7b": "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
+        "mixtral": "TheBloke/Mixtral-8x7B-Instruct-v0.1-GGUF",
+        "mixtral:8x7b": "TheBloke/Mixtral-8x7B-Instruct-v0.1-GGUF",
+        "mixtral:8x22b": "MaziyarPanahi/Mixtral-8x22B-Instruct-v0.1-GGUF",
+        "codellama": "TheBloke/CodeLlama-7B-Instruct-GGUF",
+        "codellama:7b": "TheBloke/CodeLlama-7B-Instruct-GGUF",
+        "codellama:13b": "TheBloke/CodeLlama-13B-Instruct-GGUF",
+        "codellama:34b": "TheBloke/CodeLlama-34B-Instruct-GGUF",
+        "deepseek-coder": "TheBloke/deepseek-coder-6.7B-Instruct-GGUF",
+        "deepseek-coder:6.7b": "TheBloke/deepseek-coder-6.7B-Instruct-GGUF",
+        "phi3": "microsoft/Phi-3-mini-4k-instruct-gguf",
+        "phi3:3.8b": "microsoft/Phi-3-mini-4k-instruct-gguf",
+        "phi3:14b": "microsoft/Phi-3-medium-4k-instruct-gguf",
+        "gemma3n": "google/gemma-3-4b-it-GGUF",
+        "gemma3n:e2b": "google/gemma-3-1b-it-GGUF",
+        "gemma3n:e4b": "google/gemma-3-4b-it-GGUF",
+        "translategemma": "catchmeifyoucan/Qwen2.5-7B-Instruct-GGUF",
+    }
+    
+    for key, hf_repo in OLLAMA_TO_HF_MAP.items():
+        key_lower = key.lower()
+        # Direct match
+        if model_lower == key_lower:
+            return hf_repo
+        # Match with tag (e.g., "qwen3.5:4b" matches "qwen3.5")
+        if model_lower.startswith(key_lower.replace(":", "-") + "-") or model_lower.startswith(key_lower + ":"):
+            return hf_repo
+        # Match model name without owner prefix (e.g., "huihui_ai/qwen3.5-abliterated:4b" matches "qwen3.5")
+        model_without_owner = model_lower.split("/")[-1] if "/" in model_lower else model_lower
+        model_base = model_without_owner.split(":")[0].split("-")[0]  # Get base model name
+        if model_base == key_lower.split(":")[0]:
+            return hf_repo
+    
+    return None
 
 
 @ollama_app.command("info")

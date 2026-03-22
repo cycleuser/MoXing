@@ -5,6 +5,7 @@ List and use models from local Ollama installation.
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -17,8 +18,14 @@ from rich.table import Table
 
 console = Console()
 
-OLLAMA_MODELS_DIR = Path.home() / ".ollama" / "models"
+OLLAMA_USER_MODELS_DIR = Path.home() / ".ollama" / "models"
+OLLAMA_SYSTEM_MODELS_DIR = Path("/usr/share/ollama/.ollama/models")
 OLLAMA_API_URL = "http://localhost:11434"
+
+OLLAMA_MODELS_DIRS = [
+    OLLAMA_USER_MODELS_DIR,
+    OLLAMA_SYSTEM_MODELS_DIR,
+]
 
 
 @dataclass
@@ -53,13 +60,13 @@ class OllamaClient:
     def is_available(self) -> bool:
         """Check if Ollama is running."""
         if self._available is not None:
-            return self._available
+            return bool(self._available)
         
         try:
             req = Request(f"{self.api_url}/api/tags", method="GET")
             with urlopen(req, timeout=2) as resp:
                 self._available = resp.status == 200
-                return self._available
+                return bool(self._available)
         except:
             self._available = False
             return False
@@ -73,7 +80,7 @@ class OllamaClient:
                 req = Request(f"{self.api_url}/api/tags")
                 with urlopen(req, timeout=5) as resp:
                     data = json.loads(resp.read().decode())
-                    
+                
                 for m in data.get("models", []):
                     name = m.get("name", "")
                     if ":" in name:
@@ -102,49 +109,57 @@ class OllamaClient:
     def _list_models_from_disk(self) -> List[OllamaModel]:
         """List models by reading Ollama's manifest files."""
         models = []
-        manifests_dir = OLLAMA_MODELS_DIR / "manifests" / "registry.ollama.ai"
+        found = set()
         
-        if not manifests_dir.exists():
-            return models
-        
-        for owner_dir in manifests_dir.iterdir():
-            if not owner_dir.is_dir():
+        for models_dir in OLLAMA_MODELS_DIRS:
+            manifests_dir = models_dir / "manifests" / "registry.ollama.ai"
+            
+            if not manifests_dir.exists():
                 continue
             
-            for model_dir in owner_dir.iterdir():
-                if not model_dir.is_dir():
+            for owner_dir in manifests_dir.iterdir():
+                if not owner_dir.is_dir():
                     continue
                 
-                for tag_file in model_dir.iterdir():
-                    if not tag_file.is_file():
+                for model_dir in owner_dir.iterdir():
+                    if not model_dir.is_dir():
                         continue
                     
-                    model_name = f"{owner_dir.name}/{model_dir.name}" if owner_dir.name != "library" else model_dir.name
-                    tag = tag_file.name
-                    
-                    try:
-                        size = self._get_model_size(tag_file)
-                    except:
-                        size = 0
-                    
-                    models.append(OllamaModel(
-                        name=model_name,
-                        tag=tag,
-                        id="",
-                        size=size,
-                        modified=""
-                    ))
+                    for tag_file in model_dir.iterdir():
+                        if not tag_file.is_file():
+                            continue
+                        
+                        model_name = f"{owner_dir.name}/{model_dir.name}" if owner_dir.name != "library" else model_dir.name
+                        tag = tag_file.name
+                        
+                        key = f"{model_name}:{tag}"
+                        if key in found:
+                            continue
+                        found.add(key)
+                        
+                        try:
+                            size = self._get_model_size(tag_file, models_dir)
+                        except:
+                            size = 0
+                        
+                        models.append(OllamaModel(
+                            name=model_name,
+                            tag=tag,
+                            id="",
+                            size=size,
+                            modified=""
+                        ))
         
         return models
     
-    def _get_model_size(self, manifest_path: Path) -> int:
+    def _get_model_size(self, manifest_path: Path, models_dir: Path) -> int:
         """Calculate model size from manifest."""
         try:
             with open(manifest_path, "r") as f:
                 manifest = json.load(f)
             
             total_size = 0
-            blobs_dir = OLLAMA_MODELS_DIR / "blobs"
+            blobs_dir = models_dir / "blobs"
             
             for layer in manifest.get("layers", []):
                 digest = layer.get("digest", "")
@@ -173,6 +188,88 @@ class OllamaClient:
     
     def get_model_path(self, name: str) -> Optional[Path]:
         """Get the path to the model blob file (GGUF format)."""
+        info = self.get_model_info(name)
+        if info and "modelfile" in info:
+            path = self._extract_path_from_modelfile(info["modelfile"])
+            if path:
+                return path
+        
+        return self._find_model_blob_from_manifest(name)
+    
+    def _extract_path_from_modelfile(self, modelfile: str) -> Optional[Path]:
+        """Extract the GGUF path from modelfile's FROM line."""
+        for line in modelfile.split("\n"):
+            line = line.strip()
+            if line.upper().startswith("FROM "):
+                path_str = line[5:].strip()
+                path = Path(path_str)
+                if path.exists():
+                    try:
+                        with open(path, "rb") as f:
+                            f.read(4)
+                        return path
+                    except PermissionError:
+                        return None
+        return None
+    
+    def check_model_access(self, name: str) -> tuple[bool, Optional[Path], str]:
+        """Check if a model's GGUF file is accessible.
+        
+        Returns:
+            (is_accessible, gguf_path, message)
+        """
+        info = self.get_model_info(name)
+        if not info:
+            return False, None, f"Model '{name}' not found in Ollama"
+        
+        if "modelfile" not in info:
+            return False, None, f"Could not get modelfile for '{name}'"
+        
+        for line in info["modelfile"].split("\n"):
+            line = line.strip()
+            if line.upper().startswith("FROM "):
+                path_str = line[5:].strip()
+                path = Path(path_str)
+                try:
+                    if not path.exists():
+                        return False, None, f"GGUF file not found: {path}"
+                except PermissionError:
+                    return False, path, (
+                        f"Permission denied: {path}\n"
+                        f"The model file is owned by the 'ollama' system user.\n"
+                        f"Options:\n"
+                        f"  1. Copy to user directory:\n"
+                        f"     mkdir -p ~/ollama_models\n"
+                        f"     sudo cp {path} ~/ollama_models/{name.replace(':', '_')}.gguf\n"
+                        f"     sudo chown $USER:$USER ~/ollama_models/{name.replace(':', '_')}.gguf\n"
+                        f"  2. Re-pull model (will store in ~/.ollama/models/):\n"
+                        f"     ollama pull {name}\n"
+                        f"  3. Use ollama directly instead of moxing:\n"
+                        f"     ollama run {name}"
+                    )
+                try:
+                    with open(path, "rb") as f:
+                        f.read(4)
+                    return True, path, "OK"
+                except PermissionError:
+                    return False, path, (
+                        f"Permission denied: {path}\n"
+                        f"The model file is owned by the 'ollama' system user.\n"
+                        f"Options:\n"
+                        f"  1. Copy to user directory:\n"
+                        f"     mkdir -p ~/ollama_models\n"
+                        f"     sudo cp {path} ~/ollama_models/{name.replace(':', '_')}.gguf\n"
+                        f"     sudo chown $USER:$USER ~/ollama_models/{name.replace(':', '_')}.gguf\n"
+                        f"  2. Re-pull model (will store in ~/.ollama/models/):\n"
+                        f"     ollama pull {name}\n"
+                        f"  3. Use ollama directly instead of moxing:\n"
+                        f"     ollama run {name}"
+                    )
+        
+        return False, None, f"No FROM line found in modelfile for '{name}'"
+    
+    def _find_model_blob_from_manifest(self, name: str) -> Optional[Path]:
+        """Find model blob by checking manifests in all model directories."""
         manifest_path = self._find_manifest(name)
         if manifest_path:
             try:
@@ -183,9 +280,10 @@ class OllamaClient:
                     if layer.get("mediaType") == "application/vnd.ollama.image.model":
                         digest = layer.get("digest", "")
                         if digest.startswith("sha256:"):
-                            blob_path = OLLAMA_MODELS_DIR / "blobs" / f"sha256-{digest[7:]}"
-                            if blob_path.exists():
-                                return blob_path
+                            for models_dir in OLLAMA_MODELS_DIRS:
+                                blob_path = models_dir / "blobs" / f"sha256-{digest[7:]}"
+                                if blob_path.exists():
+                                    return blob_path
             except:
                 pass
         
@@ -199,24 +297,28 @@ class OllamaClient:
         return self.get_model_path(name)
     
     def _find_manifest(self, name: str) -> Optional[Path]:
-        """Find the manifest file for a model."""
+        """Find the manifest file for a model in all model directories."""
         if ":" in name:
             model_name, tag = name.rsplit(":", 1)
         else:
             model_name = name
             tag = "latest"
         
-        manifests_dir = OLLAMA_MODELS_DIR / "manifests" / "registry.ollama.ai"
-        
-        if "/" in model_name:
-            owner, model = model_name.split("/", 1)
-            manifest_path = manifests_dir / owner / model / tag
-            if manifest_path.exists():
-                return manifest_path
-        else:
-            manifest_path = manifests_dir / "library" / model_name / tag
-            if manifest_path.exists():
-                return manifest_path
+        for models_dir in OLLAMA_MODELS_DIRS:
+            manifests_dir = models_dir / "manifests" / "registry.ollama.ai"
+            
+            if not manifests_dir.exists():
+                continue
+            
+            if "/" in model_name:
+                owner, model = model_name.split("/", 1)
+                manifest_path = manifests_dir / owner / model / tag
+                if manifest_path.exists():
+                    return manifest_path
+            else:
+                manifest_path = manifests_dir / "library" / model_name / tag
+                if manifest_path.exists():
+                    return manifest_path
         
         return None
     
