@@ -89,7 +89,8 @@ class DeviceDetector:
             result = subprocess.run(
                 [str(self.binary_path), "--list-devices"],
                 capture_output=True,
-                text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=30,
                 cwd=str(self.binary_path.parent)
             )

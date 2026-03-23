@@ -275,7 +275,8 @@ class MLXServer:
             [sys.executable, str(script_path), self.host, str(self.port), self.model],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            encoding='utf-8',
+            errors='replace'
         )
         
         if wait:

@@ -5,8 +5,10 @@ List and use models from local Ollama installation.
 """
 
 import json
+import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
@@ -22,10 +24,17 @@ OLLAMA_USER_MODELS_DIR = Path.home() / ".ollama" / "models"
 OLLAMA_SYSTEM_MODELS_DIR = Path("/usr/share/ollama/.ollama/models")
 OLLAMA_API_URL = "http://localhost:11434"
 
+if sys.platform == "win32":
+    OLLAMA_WINDOWS_MODELS_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "ollama" / "models"
+
 OLLAMA_MODELS_DIRS = [
     OLLAMA_USER_MODELS_DIR,
-    OLLAMA_SYSTEM_MODELS_DIR,
 ]
+
+if sys.platform == "win32":
+    OLLAMA_MODELS_DIRS.append(OLLAMA_WINDOWS_MODELS_DIR)
+else:
+    OLLAMA_MODELS_DIRS.append(OLLAMA_SYSTEM_MODELS_DIR)
 
 
 @dataclass

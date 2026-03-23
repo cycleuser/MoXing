@@ -164,7 +164,8 @@ class LlamaServer:
             result = subprocess.run(
                 [str(binary), "--list-devices"],
                 capture_output=True,
-                text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=30,
                 cwd=str(binary.parent)
             )
@@ -228,7 +229,6 @@ class LlamaServer:
             args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
             encoding='utf-8',
             errors='replace',
             cwd=str(self.get_binary_path().parent)

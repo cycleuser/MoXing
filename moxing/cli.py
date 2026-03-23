@@ -1040,6 +1040,8 @@ def ollama_serve(
     port: int = typer.Option(8080, "-p", "--port", help="Server port"),
     host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
     ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
+    skip_check: bool = typer.Option(False, "--skip-check", help="Skip compatibility check"),
 ):
     """Serve an Ollama model with OpenAI-compatible API.
     
@@ -1049,10 +1051,14 @@ def ollama_serve(
     Examples:
         moxing ollama serve gemma3:4b
         moxing ollama serve llama3.2:3b -c 8192
+        moxing ollama serve omnicoder-9b --skip-check
     """
     from moxing.ollama import OllamaClient, get_ollama_model
     from moxing.server import LlamaServer
     from moxing.device import DeviceDetector
+    
+    if verbose:
+        console.print(f"[dim]Looking up model: {model}[/dim]")
     
     client = OllamaClient()
     
@@ -1068,16 +1074,41 @@ def ollama_serve(
         console.print("\n[dim]Run 'moxing ollama list' to see all models[/dim]")
         raise typer.Exit(1)
     
+    if verbose:
+        console.print(f"[dim]Found model: {ollama_model.full_name} ({ollama_model.size_gb:.1f} GB)[/dim]")
+    
     is_accessible, gguf_path, message = client.check_model_access(model)
+    
+    if verbose:
+        console.print(f"[dim]Model accessible: {is_accessible}[/dim]")
+        if gguf_path:
+            console.print(f"[dim]GGUF path: {gguf_path}[/dim]")
     
     if not is_accessible:
         console.print(f"[red]Cannot access model '{model}':[/red]")
         console.print(message)
         raise typer.Exit(1)
     
-    gguf_path = _get_compatible_gguf(model, gguf_path, ollama_model.size_gb)
-    if not gguf_path:
-        raise typer.Exit(1)
+    if skip_check:
+        console.print("[yellow]Skipping compatibility check (--skip-check)[/yellow]")
+    else:
+        if verbose:
+            console.print(f"[dim]Calling _get_compatible_gguf...[/dim]")
+        
+        try:
+            gguf_path = _get_compatible_gguf(model, gguf_path, ollama_model.size_gb, verbose)
+        except Exception as e:
+            console.print(f"[red]Error in compatibility check: {e}[/red]")
+            import traceback
+            console.print(f"[dim]{traceback.format_exc()}[/dim]")
+            raise typer.Exit(1)
+        
+        if verbose:
+            console.print(f"[dim]_get_compatible_gguf returned: {gguf_path}[/dim]")
+        
+        if not gguf_path:
+            console.print(f"[red]Failed to get compatible GGUF[/red]")
+            raise typer.Exit(1)
     
     console.print(Panel(
         f"[green]Model:[/green] {ollama_model.full_name}\n"
@@ -1143,13 +1174,23 @@ def ollama_serve(
         console.print("\n[yellow]Shutting down...[/yellow]")
         if server:
             server.stop()
-    except RuntimeError:
+    except RuntimeError as e:
+        console.print(f"[red]Runtime error: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Unexpected error: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
         raise typer.Exit(1)
 
 
-def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float) -> Optional[Path]:
+def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float, verbose: bool = False) -> Optional[Path]:
     """Get a compatible GGUF file, downloading from Hugging Face if Ollama's is incompatible."""
     from moxing.binaries import get_binary_manager
+    
+    if verbose:
+        console.print(f"[dim]Checking GGUF compatibility for: {model}[/dim]")
+        console.print(f"[dim]GGUF path: {ollama_gguf}[/dim]")
     
     manager = get_binary_manager()
     if not manager.has_binaries():
@@ -1158,7 +1199,13 @@ def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float) -> Optio
     
     llama_cli = manager.get_binary_path("llama-cli")
     
-    console.print("[dim]Loading GGUF model...[/dim]")
+    if verbose:
+        console.print(f"[dim]Using llama-cli: {llama_cli}[/dim]")
+        console.print(f"[dim]Binary exists: {llama_cli.exists()}[/dim]")
+        console.print(f"[dim]GGUF exists: {ollama_gguf.exists()}[/dim]")
+        console.print(f"[dim]GGUF size: {ollama_gguf.stat().st_size / (1024**3):.2f} GB[/dim]")
+    
+    console.print("[blue]Checking GGUF compatibility...[/blue]")
     
     incompatible_patterns = [
         "error loading model",
@@ -1170,27 +1217,44 @@ def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float) -> Optio
         "done_getting_tensors",
     ]
     
-    stderr = ""
     try:
-        proc = subprocess.Popen(
-            [str(llama_cli), "-m", str(ollama_gguf), "-n", "1", "-p", "x", "-c", "128"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+        cmd = [str(llama_cli), "-m", str(ollama_gguf), "-n", "1", "-p", "x", "-c", "128", "--no-display-prompt"]
+        if verbose:
+            console.print(f"[dim]Command: {' '.join(cmd)}[/dim]")
+            console.print(f"[dim]Running subprocess.run with timeout=120s...[/dim]")
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=120,
+            cwd=str(llama_cli.parent)
         )
-        try:
-            _, stderr = proc.communicate(timeout=20)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            _, stderr = proc.communicate()
+        
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        returncode = result.returncode
+        
+        if verbose:
+            console.print(f"[dim]Process completed with return code: {returncode}[/dim]")
+            console.print(f"[dim]stdout length: {len(stdout)}[/dim]")
+            console.print(f"[dim]stderr length: {len(stderr)}[/dim]")
+            if stdout:
+                console.print(f"[dim]stdout preview: {stdout[:500]}[/dim]")
+            if stderr:
+                console.print(f"[dim]stderr output (first 15 lines):[/dim]")
+                for line in stderr.strip().split("\n")[:15]:
+                    console.print(f"[dim]  {line}[/dim]")
+            else:
+                console.print(f"[dim]No stderr output[/dim]")
         
         if stderr:
             stderr_lower = stderr.lower()
             is_incompatible = any(p in stderr_lower for p in incompatible_patterns)
             
             if is_incompatible:
-                console.print(f"[yellow]⚠ Ollama GGUF is incompatible with llama.cpp[/yellow]")
+                console.print(f"[yellow]Ollama GGUF is incompatible with llama.cpp[/yellow]")
                 console.print(f"[dim]Ollama uses a custom GGUF format. Downloading compatible version...[/dim]")
                 
                 hf_repo = _get_hf_repo_for_ollama_model(model)
@@ -1211,13 +1275,30 @@ def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float) -> Optio
                     console.print(f"[red]Failed to download: {e}[/red]")
                     return None
             
-            console.print(f"[green]✓ GGUF is compatible[/green]")
+            console.print(f"[green]GGUF is compatible[/green]")
             return ollama_gguf
+        else:
+            if returncode == 0:
+                console.print(f"[green]GGUF is compatible[/green]")
+                return ollama_gguf
+            else:
+                console.print(f"[yellow]Warning: llama-cli exited with code {returncode}[/yellow]")
+                if stdout:
+                    console.print(f"[dim]stdout: {stdout[:300]}[/dim]")
+                console.print(f"[dim]Proceeding with the GGUF file anyway...[/dim]")
+                return ollama_gguf
             
+    except subprocess.TimeoutExpired:
+        console.print(f"[yellow]Warning: Model loading timed out (120s)[/yellow]")
+        console.print(f"[dim]The model might be too large or incompatible. Proceeding anyway...[/dim]")
+        return ollama_gguf
     except Exception as e:
-        console.print(f"[yellow]⚠ Compatibility check error: {e}[/yellow]")
-    
-    return ollama_gguf
+        console.print(f"[yellow]Compatibility check error: {e}[/yellow]")
+        import traceback
+        if verbose:
+            console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        console.print(f"[dim]Proceeding with the GGUF file anyway...[/dim]")
+        return ollama_gguf
 
 
 def _get_hf_repo_for_ollama_model(model: str) -> Optional[str]:

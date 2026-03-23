@@ -108,6 +108,7 @@ pip install moxing[cpu]    # CPU only
 ```bash
 moxing ollama list                  # List installed models
 moxing ollama serve llama3.2        # Serve with OpenAI API
+moxing ollama serve llama3.2 --skip-check  # Skip compatibility check
 moxing ollama serve --select        # Interactive selection
 ```
 

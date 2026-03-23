@@ -166,23 +166,23 @@ class MultiCompressor:
         if self.algorithm == "zstd":
             result = subprocess.run(
                 ["zstd", f"-{self.level}", "-f", str(input_path), "-o", str(output_path)],
-                capture_output=True, text=True
+                capture_output=True, encoding='utf-8', errors='replace'
             )
         elif self.algorithm == "lz4":
             result = subprocess.run(
                 ["lz4", f"-{self.level}", "-f", str(input_path), str(output_path)],
-                capture_output=True, text=True
+                capture_output=True, encoding='utf-8', errors='replace'
             )
         elif self.algorithm == "xz":
             result = subprocess.run(
                 ["xz", f"-{self.level}", "-k", "-f", str(input_path)],
-                capture_output=True, text=True
+                capture_output=True, encoding='utf-8', errors='replace'
             )
             output_path = Path(str(input_path) + ".xz")
         elif self.algorithm == "gzip":
             result = subprocess.run(
                 ["gzip", f"-{self.level}", "-k", "-f", str(input_path)],
-                capture_output=True, text=True
+                capture_output=True, encoding='utf-8', errors='replace'
             )
             output_path = Path(str(input_path) + ".gz")
         else:
@@ -233,23 +233,23 @@ class MultiCompressor:
         if alg == "zstd":
             result = subprocess.run(
                 ["zstd", "-d", "-f", str(input_path), "-o", str(output_path)],
-                capture_output=True, text=True
+                capture_output=True, encoding='utf-8', errors='replace'
             )
         elif alg == "lz4":
             result = subprocess.run(
                 ["lz4", "-d", "-f", str(input_path), str(output_path)],
-                capture_output=True, text=True
+                capture_output=True, encoding='utf-8', errors='replace'
             )
         elif alg == "xz":
             result = subprocess.run(
                 ["xz", "-d", "-k", "-f", str(input_path)],
-                capture_output=True, text=True
+                capture_output=True, encoding='utf-8', errors='replace'
             )
             output_path = input_path.with_suffix("")
         elif alg == "gzip":
             result = subprocess.run(
                 ["gzip", "-d", "-k", "-f", str(input_path)],
-                capture_output=True, text=True
+                capture_output=True, encoding='utf-8', errors='replace'
             )
             output_path = input_path.with_suffix("")
         else:
