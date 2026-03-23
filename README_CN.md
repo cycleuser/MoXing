@@ -108,6 +108,7 @@ pip install moxing[cpu]    # 仅 CPU
 ```bash
 moxing ollama list                  # 列出已安装模型
 moxing ollama serve llama3.2        # 运行模型
+moxing ollama serve llama3.2 --skip-check  # 跳过兼容性检查
 moxing ollama serve --select        # 交互式选择
 ```
 
