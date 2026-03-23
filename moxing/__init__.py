@@ -24,7 +24,7 @@ Quick start:
         pass
 """
 
-__version__ = '0.1.10'
+__version__ = '0.1.14'
 
 from moxing.client import Client, ChatCompletion, Message
 from moxing.server import LlamaServer, ServerConfig, GPUInfo

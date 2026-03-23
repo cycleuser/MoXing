@@ -376,8 +376,21 @@ def print_ollama_models(models: Optional[List[OllamaModel]] = None,
 
 def get_ollama_model(name: str) -> Optional[OllamaModel]:
     """Get a specific Ollama model by name."""
+    if ":" in name:
+        base_name, tag = name.rsplit(":", 1)
+    else:
+        base_name = name
+        tag = "latest"
+    
+    normalized_name = f"{base_name}:{tag}" if tag != "latest" else base_name
+    
     models = list_ollama_models()
     for m in models:
-        if m.full_name == name or m.name == name:
+        if m.name == base_name:
+            if tag == "latest" and m.tag == "latest":
+                return m
+            if m.tag == tag:
+                return m
+        if m.full_name == normalized_name or m.full_name == name or m.name == name:
             return m
     return None

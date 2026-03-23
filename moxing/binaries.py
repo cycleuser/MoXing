@@ -485,42 +485,73 @@ class BinaryManager:
         arch = PlatformDetector.get_arch()
         backend = self.backend
         
-        platform_patterns = {
-            "windows": ["win", "windows"],
-            "linux": ["linux", "ubuntu"],
-            "darwin": ["macos", "darwin"],
-        }
-        
-        backend_patterns = {
-            "cuda": ["cuda", "cu"],
-            "vulkan": ["vulkan"],
-            "rocm": ["rocm", "hip"],
-            "metal": ["metal"],
-            "cpu": ["cpu"],
-        }
-        
-        patterns = platform_patterns.get(os_name, [])
-        b_pats = backend_patterns.get(backend, [])
+        candidates = []
         
         for asset in assets:
             name = asset["name"].lower()
             
-            if not any(p in name for p in patterns):
+            if not name.endswith((".zip", ".tar.gz", ".tgz")):
                 continue
             
-            if os_name == "darwin":
-                if arch == "arm64" and "arm64" not in name:
-                    continue
-                if arch == "x64" and "arm64" in name:
-                    continue
-            elif backend == "cuda":
-                if "cudart" in name:
-                    return asset
-            elif b_pats and not any(p in name for p in b_pats):
+            if "cudart" in name:
                 continue
             
-            if name.endswith((".zip", ".tar.gz", ".tgz")):
-                return asset
+            if "xcframework" in name:
+                continue
+            
+            if "openEuler" in name or "310p" in name or "910b" in name or "s390x" in name:
+                continue
+            
+            os_match = False
+            if os_name == "windows" and ("win" in name or "windows" in name):
+                os_match = True
+            elif os_name == "linux" and ("ubuntu" in name or "linux" in name):
+                os_match = True
+            elif os_name == "darwin" and ("macos" in name or "darwin" in name):
+                os_match = True
+            
+            if not os_match:
+                continue
+            
+            arch_match = False
+            if arch == "arm64" and "arm64" in name:
+                arch_match = True
+            elif arch == "x64" and ("x64" in name or "x86" in name):
+                arch_match = True
+            
+            if not arch_match:
+                continue
+            
+            backend_match = False
+            backend_score = 0
+            
+            if backend == "cuda":
+                if "cuda" in name:
+                    backend_match = True
+                    backend_score = 10
+            elif backend == "vulkan":
+                if "vulkan" in name:
+                    backend_match = True
+                    backend_score = 10
+            elif backend == "rocm":
+                if "rocm" in name or "hip" in name:
+                    backend_match = True
+                    backend_score = 10
+            elif backend == "metal":
+                if "metal" in name or (os_name == "darwin" and "cuda" not in name and "vulkan" not in name):
+                    backend_match = True
+                    backend_score = 5 if "metal" not in name else 10
+            elif backend == "cpu":
+                if "cuda" not in name and "vulkan" not in name and "rocm" not in name and "hip" not in name and "sycl" not in name and "openvino" not in name:
+                    backend_match = True
+                    backend_score = 5
+            
+            if backend_match:
+                candidates.append((asset, backend_score, name))
+        
+        if candidates:
+            candidates.sort(key=lambda x: (-x[1], len(x[2])))
+            return candidates[0][0]
         
         return None
     
@@ -659,7 +690,29 @@ class BinaryManager:
             console.print(f"[blue]Found: {asset_name}[/blue]")
             console.print(f"[blue]llama.cpp version: {tag}[/blue]")
         
-        return self._do_download(download_url, asset_name, tag, quiet)
+        cache_dir = self._do_download(download_url, asset_name, tag, quiet)
+        
+        if PlatformDetector.get_os() == "windows" and self.backend == "cuda":
+            cudart_asset = self._find_cudart_asset(release["assets"])
+            if cudart_asset:
+                if not quiet:
+                    console.print("[blue]Downloading CUDA runtime DLLs...[/blue]")
+                self._do_download(
+                    cudart_asset["browser_download_url"],
+                    cudart_asset["name"],
+                    tag,
+                    quiet
+                )
+        
+        return cache_dir
+    
+    def _find_cudart_asset(self, assets: List[dict]) -> Optional[dict]:
+        """Find CUDA runtime DLLs asset for Windows."""
+        for asset in assets:
+            name = asset["name"].lower()
+            if "cudart" in name and "win" in name and name.endswith(".zip"):
+                return asset
+        return None
     
     def _do_download(self, download_url: str, asset_name: str, tag: str, quiet: bool = False) -> Path:
         """Perform the actual download and extraction."""
