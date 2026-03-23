@@ -1039,6 +1039,7 @@ def ollama_serve(
     model: str = typer.Argument(..., help="Ollama model name (e.g., gemma3:4b)"),
     port: int = typer.Option(8080, "-p", "--port", help="Server port"),
     host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
+    ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size"),
 ):
     """Serve an Ollama model with OpenAI-compatible API.
     
@@ -1047,7 +1048,7 @@ def ollama_serve(
     
     Examples:
         moxing ollama serve gemma3:4b
-        moxing ollama serve llama3.2:3b
+        moxing ollama serve llama3.2:3b -c 8192
     """
     from moxing.ollama import OllamaClient, get_ollama_model
     from moxing.server import LlamaServer
@@ -1098,7 +1099,7 @@ def ollama_serve(
         f"[blue]Backend:[/blue] {device_config.backend.value}\n"
         f"[yellow]Device:[/yellow] {device_config.device.name}\n"
         f"[magenta]GPU Layers:[/magenta] all\n"
-        f"[cyan]Context:[/cyan] 4096",
+        f"[cyan]Context:[/cyan] {ctx_size}",
         title="Configuration"
     ))
     
@@ -1108,7 +1109,7 @@ def ollama_serve(
             model=str(gguf_path),
             host=host,
             port=port,
-            ctx_size=4096,
+            ctx_size=ctx_size,
             n_gpu_layers=-1,
             device=device_str,
             gpu_backend=device_config.backend.value

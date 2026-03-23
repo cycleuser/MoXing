@@ -254,20 +254,36 @@ class LlamaServer:
         return self
     
     def _start_monitor(self):
-        """Start background thread to monitor server process."""
+        """Start background thread to monitor server process and consume output."""
+        def drain_stream(stream, name):
+            try:
+                for line in stream:
+                    pass
+            except:
+                pass
+        
+        if self._process:
+            if self._process.stdout:
+                stdout_thread = threading.Thread(
+                    target=drain_stream, 
+                    args=(self._process.stdout, "stdout"),
+                    daemon=True
+                )
+                stdout_thread.start()
+            if self._process.stderr:
+                stderr_thread = threading.Thread(
+                    target=drain_stream,
+                    args=(self._process.stderr, "stderr"),
+                    daemon=True
+                )
+                stderr_thread.start()
+        
         def monitor():
             while self._process and self._process.poll() is None:
                 time.sleep(0.5)
             
             if self._process and self._process.poll() is not None:
-                try:
-                    stdout, stderr = self._process.communicate(timeout=1)
-                    if stderr:
-                        console.print(f"\n[red bold]Server crashed:[/red bold]")
-                        for line in stderr.strip().split("\n")[-10:]:
-                            console.print(f"[red]{line}[/red]")
-                except:
-                    pass
+                console.print(f"\n[red bold]Server crashed![/red bold]")
         
         monitor_thread = threading.Thread(target=monitor, daemon=True)
         monitor_thread.start()

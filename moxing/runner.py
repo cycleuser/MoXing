@@ -120,8 +120,8 @@ class AutoRunner:
                 n_gpu_layers=0
             )
         
-        if device_config.recommended_ctx > 0:
-            ctx_size = min(ctx_size, device_config.recommended_ctx)
+        if ctx_size == 0 and device_config.recommended_ctx > 0:
+            ctx_size = device_config.recommended_ctx
         
         return RunConfig(
             model_path=model_path,
