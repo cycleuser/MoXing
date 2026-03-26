@@ -23,11 +23,17 @@ pip install moxing
 # 运行 Ollama 模型
 moxing ollama serve llama3.2
 
+# 指定设备和后端运行
+moxing ollama serve llama3.2 -d gpu0 -b vulkan
+
 # 运行 HuggingFace 模型
 moxing serve Qwen/Qwen2.5-7B-Instruct-GGUF
 
-# 运行本地 GGUF 文件
-moxing serve ./model.gguf --port 8080
+# 运行本地 GGUF 文件，指定设备
+moxing serve ./model.gguf --port 8080 -d gpu1 -b cuda
+
+# 列出可用设备
+moxing devices
 ```
 
 然后使用 OpenAI API：
@@ -99,6 +105,69 @@ pip install moxing[vulkan] # 跨平台 GPU
 pip install moxing[metal]  # Apple Silicon
 pip install moxing[rocm]   # AMD GPU
 pip install moxing[cpu]    # 仅 CPU
+```
+
+## 设备选择
+
+列出可用设备及其 ID：
+
+```bash
+moxing devices
+```
+
+启动服务时指定设备和后端：
+
+```bash
+# 使用 GPU 0 和 Vulkan 后端
+moxing serve model.gguf -d gpu0 -b vulkan
+
+# 使用 GPU 1 和 CUDA 后端
+moxing serve model.gguf -d gpu1 -b cuda
+
+# 仅使用 CPU
+moxing serve model.gguf -d cpu
+
+# 在不同设备上运行多个实例（自动端口）
+moxing serve model1.gguf -d gpu0 --auto-port &
+moxing serve model2.gguf -d gpu1 --auto-port &
+moxing serve model3.gguf -d cpu --auto-port &
+
+# 或手动指定端口
+moxing serve model1.gguf -d gpu0 -p 8080 &
+moxing serve model2.gguf -d gpu1 -p 8081 &
+moxing serve model3.gguf -d cpu -p 8082 &
+```
+
+设备选项：
+- `-d gpu0`、`-d gpu1`、... - 按索引选择 GPU
+- `-d cpu` - 仅使用 CPU
+- `-d auto` - 自动选择最佳设备（默认）
+
+端口选项：
+- `-p 8080` - 使用指定端口
+- `-p 0` 或 `--auto-port` - 自动寻找可用端口
+
+后端选项：
+- `-b vulkan` - 跨平台 GPU（AMD、Intel、NVIDIA）
+- `-b cuda` - NVIDIA GPU
+- `-b rocm` - AMD GPU（Linux）
+- `-b metal` - Apple Silicon（macOS）
+- `-b cpu` - 仅 CPU
+- `-b auto` - 自动检测（默认）
+
+### 下载多个后端二进制文件
+
+下载所有支持的后端二进制文件，以支持设备切换：
+
+```bash
+# 列出可用后端
+moxing download-binaries --list
+
+# 下载特定后端
+moxing download-binaries --backend vulkan
+
+# 下载所有后端（支持多设备）
+moxing download-binaries --backend all
 ```
 
 ## 模型来源

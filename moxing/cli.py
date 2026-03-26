@@ -95,11 +95,13 @@ def serve(
     model: str = typer.Argument(..., help="Model name, path to GGUF file, HuggingFace repo, or ollama:model"),
     quant: str = typer.Option("Q4_K_M", "-q", "--quant", help="Quantization type"),
     host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
-    port: int = typer.Option(8080, "-p", "--port", help="Server port"),
+    port: int = typer.Option(8080, "-p", "--port", help="Server port (0 for auto)"),
     ctx_size: int = typer.Option(0, "-c", "--ctx-size", help="Context size (0=auto-detect based on VRAM)"),
     source: str = typer.Option("auto", "-s", "--source", help="Model source (huggingface/modelscope/auto)"),
-    backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, llama.cpp, mlx, ollama"),
+    backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, vulkan, cuda, rocm, metal, cpu"),
+    device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu (use 'moxing devices' to list)"),
     auto: bool = typer.Option(True, "--auto/--no-auto", help="Auto-detect best device"),
+    auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
     force: bool = typer.Option(False, "-f", "--force", help="Force use specified backend without compatibility check"),
 ):
@@ -107,29 +109,45 @@ def serve(
     
     Backends:
     - auto: Automatically choose best backend based on model compatibility
-    - llama.cpp: Use llama.cpp (default for GGUF files)
-    - mlx: Use Apple MLX framework (macOS only, supports newer models)
-    - ollama: Use Ollama (requires Ollama installed)
+    - vulkan: Cross-platform GPU (AMD, Intel, NVIDIA)
+    - cuda: NVIDIA GPU
+    - rocm: AMD GPU (Linux)
+    - metal: Apple Silicon (macOS)
+    - cpu: CPU only
+    
+    Devices:
+    - auto: Automatically select best device
+    - gpu0, gpu1, ...: Specific GPU by index
+    - cpu: Use CPU only
+    - Run 'moxing devices' to list available devices
     
     Examples:
     - GGUF file: moxing serve model.gguf
+    - With device: moxing serve model.gguf -d gpu0 -b vulkan
+    - Auto port: moxing serve model.gguf --auto-port
     - HuggingFace: moxing serve Qwen/Qwen2.5-3B-Instruct -b mlx
     - Ollama model: moxing serve ollama:gemma3:4b
-    - Ollama model: moxing serve gemma3:4b -b ollama
     """
     from moxing.runner import AutoRunner
     from moxing.mlx_server import MLXServer
     from moxing.gguf_check import diagnose_gguf, print_diagnosis, GGUFParser
     from moxing.ollama import OllamaClient, get_ollama_model
     from moxing.gguf_compress import is_gguf_compressed, resolve_model_path
+    from moxing.server import find_available_port, is_port_in_use
+    
+    if port == 0 or auto_port or is_port_in_use(port, host):
+        original_port = port if port > 0 else 8080
+        port = find_available_port(original_port)
+        if port != original_port:
+            console.print(f"[yellow]Port {original_port} in use, using port {port}[/yellow]")
     
     if model.startswith("ollama:"):
         ollama_model = model[7:]
-        ollama_serve(ollama_model, port, host)
+        ollama_serve_impl(ollama_model, port, host, ctx_size, device, backend, auto_port, verbose, False)
         return
     
     if backend == "ollama":
-        ollama_serve(model, port, host)
+        ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, False)
         return
     
     model_file = Path(model)
@@ -233,60 +251,105 @@ def serve(
             console.print(f"[red]Error: {e}[/red]")
             raise typer.Exit(1)
     else:
-        runner = AutoRunner(auto_detect_device=auto)
+        from moxing.device import DeviceDetector, BackendType
+        from moxing.server import LlamaServer
+        
+        detector = DeviceDetector()
+        detector.detect()
+        
+        model_size_gb = 0
+        model_path_obj = Path(model)
+        if model_path_obj.exists():
+            model_size_gb = model_path_obj.stat().st_size / (1024 ** 3)
+        
+        if device != "auto":
+            device_config = detector.get_device_config_by_name(device, backend, model_size_gb)
+        elif backend != "auto":
+            try:
+                backend_type = BackendType(backend.lower())
+                device_config = detector.get_best_device(model_size_gb)
+                device_config.backend = backend_type
+            except ValueError:
+                console.print(f"[red]Unknown backend: {backend}[/red]")
+                raise typer.Exit(1)
+        else:
+            device_config = detector.get_best_device(model_size_gb)
+        
+        if ctx_size == 0:
+            ctx_size = device_config.recommended_ctx
+        
+        device_str = "auto"
+        if device_config.device.backend != BackendType.CPU:
+            if device_config.backend == BackendType.METAL:
+                device_str = f"MTL{device_config.device.index}"
+            else:
+                device_str = f"{device_config.backend.value.upper()}{device_config.device.index}"
+        
+        console.print(Panel(
+            f"[green]Model:[/green] {model}\n"
+            f"[blue]Backend:[/blue] {device_config.backend.value}\n"
+            f"[yellow]Device:[/yellow] {device_config.device.name}\n"
+            f"[magenta]GPU Layers:[/magenta] {device_config.n_gpu_layers if device_config.n_gpu_layers >= 0 else 'all'}\n"
+            f"[cyan]Context:[/cyan] {ctx_size}\n"
+            f"[dim]{device_config.notes}[/dim]",
+            title="Configuration"
+        ))
         
         try:
-            server = runner.server(
+            server = LlamaServer(
                 model=model,
-                quant=quant,
-                source=source,
-                ctx_size=ctx_size,
+                host=host,
                 port=port,
-                verbose=verbose
+                ctx_size=ctx_size,
+                n_gpu_layers=device_config.n_gpu_layers,
+                device=device_str,
+                gpu_backend=device_config.backend.value
             )
             
             console.print(Panel(
                 f"[green]Server running at:[/green] http://{host}:{port}\n"
                 f"[blue]OpenAI API:[/blue] http://{host}:{port}/v1\n"
-                f"[magenta]Backend:[/magenta] llama.cpp\n"
+                f"[magenta]Backend:[/magenta] {device_config.backend.value}\n"
                 f"[yellow]Press Ctrl+C to stop[/yellow]",
                 title="moxing server"
             ))
             
-            try:
-                server.start(wait=False)
-            except RuntimeError as e:
-                console.print(f"\n[red bold]Failed to start server![/red bold]")
-                console.print(f"[red]{e}[/red]")
-                
-                from moxing.gguf_check import diagnose_gguf, get_model_suggestions
-                model_path = Path(model)
-                if model_path.exists() and model.endswith(".gguf"):
-                    console.print(f"\n[blue]Checking model compatibility...[/blue]")
-                    try:
-                        meta = diagnose_gguf(model_path)
-                        if not meta.is_valid:
-                            console.print(f"[yellow]Issues found:[/yellow]")
-                            for err in meta.errors:
-                                console.print(f"  [red]✗[/red] {err}")
-                    except:
-                        pass
-                    
-                    console.print(f"\n[blue]Suggestions:[/blue]")
-                    for s in get_model_suggestions(model_path):
-                        console.print(f"  • {s}")
-                
-                raise typer.Exit(1)
+            server.start(wait=False)
             
+            import time
+            time.sleep(3)
+            
+            if server._process and server._process.poll() is not None:
+                stdout, stderr = server._process.communicate()
+                console.print(f"\n[red bold]Server failed to start![/red bold]")
+                console.print(f"[dim]Exit code: {server._process.returncode}[/dim]")
+                if stdout:
+                    console.print(f"[dim]stdout:[/dim]")
+                    for line in stdout.strip().split("\n")[-20:]:
+                        if line.strip():
+                            console.print(f"[dim]  {line}[/dim]")
+                if stderr:
+                    console.print(f"[red]stderr:[/red]")
+                    for line in stderr.strip().split("\n")[-20:]:
+                        if line.strip():
+                            console.print(f"[red]  {line}[/red]")
+                console.print(f"\n[yellow]Troubleshooting tips:[/yellow]")
+                console.print(f"  • Check if the model file is valid")
+                console.print(f"  • Try with smaller context: -c 4096")
+                console.print(f"  • Try different backend: -b vulkan")
+                raise typer.Exit(1)
+        except RuntimeError as e:
+            console.print(f"\n[red bold]Failed to start server![/red bold]")
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+        
+        try:
             while server.is_running():
                 import time
                 time.sleep(1)
         except KeyboardInterrupt:
             console.print("\n[yellow]Shutting down...[/yellow]")
-            if runner._current_server:
-                runner._current_server.stop()
-        except RuntimeError:
-            raise typer.Exit(1)
+            server.stop()
         except Exception as e:
             console.print(f"[red]Error: {e}[/red]")
             import traceback
@@ -560,18 +623,42 @@ def build_binary(
 
 @app.command("download-binaries")
 def download_binaries(
-    backend: str = typer.Option("auto", "-b", "--backend", help="GPU backend (auto, vulkan, cuda, metal, cpu)"),
+    backend: str = typer.Option("auto", "-b", "--backend", help="GPU backend (auto, vulkan, cuda, metal, cpu, all)"),
     force: bool = typer.Option(False, "-f", "--force", help="Force re-download"),
+    list_available: bool = typer.Option(False, "-l", "--list", help="List available backends"),
 ):
-    """Download pre-built llama.cpp binaries."""
+    """Download pre-built llama.cpp binaries.
+    
+    Use --backend all to download binaries for all supported backends.
+    """
     from moxing.binaries import get_binary_manager, list_available_backends
+    
+    if list_available:
+        console.print("\n[bold]Available backends for this platform:[/bold]")
+        available = list_available_backends()
+        for b, has_bin in available.items():
+            status = "[green]✓ installed[/green]" if has_bin else "[dim]not installed[/dim]"
+            console.print(f"  {b}: {status}")
+        console.print("\n[dim]Use --backend <name> to download specific backend[/dim]")
+        console.print("[dim]Use --backend all to download all backends[/dim]")
+        return
+    
+    if backend == "all":
+        console.print("[blue]Downloading binaries for all supported backends...[/blue]")
+        manager = get_binary_manager()
+        results = manager.download_all_binaries(force=force)
+        
+        console.print("\n[bold]Download Results:[/bold]")
+        for b, success in results.items():
+            status = "[green]✓[/green]" if success else "[red]✗[/red]"
+            console.print(f"  {status} {b}")
+        
+        console.print(f"\n[green]Binaries installed to: {manager.cache_dir}[/green]")
+        return
     
     manager = get_binary_manager(backend)
     
     console.print(f"[blue]Downloading binaries for {manager.platform_name} ({manager.backend})...[/blue]")
-    
-    available = list_available_backends()
-    console.print(f"[dim]Available bundled backends: {available}[/dim]")
     
     try:
         manager.download_binaries(force=force)
@@ -582,6 +669,8 @@ def download_binaries(
             console.print(f"  - {b}")
         if len(binaries) > 10:
             console.print(f"  ... and {len(binaries) - 10} more")
+        
+        console.print(f"\n[green]Binaries installed to: {manager.get_cache_dir()}[/green]")
     except Exception as e:
         console.print(f"[red]Download failed: {e}[/red]")
         raise typer.Exit(1)
@@ -1037,9 +1126,12 @@ def ollama_list(
 @ollama_app.command("serve")
 def ollama_serve(
     model: str = typer.Argument(..., help="Ollama model name (e.g., gemma3:4b)"),
-    port: int = typer.Option(8080, "-p", "--port", help="Server port"),
+    port: int = typer.Option(8080, "-p", "--port", help="Server port (0 for auto)"),
     host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
     ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size"),
+    device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu"),
+    backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, vulkan, cuda, rocm, metal, cpu"),
+    auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port if default is in use"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
     skip_check: bool = typer.Option(False, "--skip-check", help="Skip compatibility check"),
 ):
@@ -1051,14 +1143,38 @@ def ollama_serve(
     Examples:
         moxing ollama serve gemma3:4b
         moxing ollama serve llama3.2:3b -c 8192
+        moxing ollama serve omnicoder-9b -d gpu0 -b vulkan
+        moxing ollama serve omnicoder-9b --auto-port  # Auto-find port
         moxing ollama serve omnicoder-9b --skip-check
     """
+    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, skip_check)
+
+
+def ollama_serve_impl(
+    model: str,
+    port: int = 8080,
+    host: str = "127.0.0.1",
+    ctx_size: int = 4096,
+    device: str = "auto",
+    backend: str = "auto",
+    auto_port: bool = False,
+    verbose: bool = False,
+    skip_check: bool = False,
+):
+    """Implementation of ollama serve with device/backend selection."""
     from moxing.ollama import OllamaClient, get_ollama_model
-    from moxing.server import LlamaServer
-    from moxing.device import DeviceDetector
+    from moxing.server import LlamaServer, find_available_port, is_port_in_use
+    from moxing.device import DeviceDetector, BackendType
+    
+    if port == 0 or auto_port or is_port_in_use(port, host):
+        original_port = port if port > 0 else 8080
+        port = find_available_port(original_port)
+        if port != original_port:
+            console.print(f"[yellow]Port {original_port} in use, using port {port}[/yellow]")
     
     if verbose:
         console.print(f"[dim]Looking up model: {model}[/dim]")
+        console.print(f"[dim]Using port: {port}[/dim]")
     
     client = OllamaClient()
     
@@ -1110,26 +1226,49 @@ def ollama_serve(
             console.print(f"[red]Failed to get compatible GGUF[/red]")
             raise typer.Exit(1)
     
+    detector = DeviceDetector()
+    detector.detect()
+    
+    if device != "auto":
+        device_config = detector.get_device_config_by_name(device, backend, ollama_model.size_gb)
+    elif backend != "auto":
+        try:
+            backend_type = BackendType(backend.lower())
+            device_config = detector.get_best_device(ollama_model.size_gb)
+            device_config.backend = backend_type
+        except ValueError:
+            console.print(f"[red]Unknown backend: {backend}[/red]")
+            raise typer.Exit(1)
+    else:
+        device_config = detector.get_best_device(ollama_model.size_gb)
+    
+    is_cpu = device_config.backend == BackendType.CPU
+    
+    n_gpu_layers = 0 if is_cpu else -1
+    device_str = "auto"
+    if not is_cpu:
+        if device_config.backend == BackendType.METAL:
+            device_str = f"MTL{device_config.device.index}"
+        else:
+            device_str = f"{device_config.backend.value.upper()}{device_config.device.index}"
+    
+    gpu_layers_display = "0 (CPU)" if is_cpu else "all"
+    
     console.print(Panel(
         f"[green]Model:[/green] {ollama_model.full_name}\n"
         f"[blue]Size:[/blue] {ollama_model.size_gb:.1f} GB\n"
         f"[blue]GGUF:[/blue] {gguf_path.name[:50]}...\n"
         f"[yellow]Port:[/yellow] {port}\n"
-        f"[magenta]Backend:[/magenta] llama.cpp (moxing)",
+        f"[magenta]Backend:[/magenta] {device_config.backend.value}\n"
+        f"[cyan]Device:[/cyan] {device_config.device.name}",
         title="Ollama Model"
     ))
-    
-    detector = DeviceDetector()
-    devices = detector.detect()
-    device_config = detector.get_best_device(ollama_model.size_gb)
-    
-    device_str = f"MTL{device_config.device.index}" if device_config.backend.value == "metal" else "auto"
     
     console.print(Panel(
         f"[green]Model:[/green] {ollama_model.full_name}\n"
         f"[blue]Backend:[/blue] {device_config.backend.value}\n"
         f"[yellow]Device:[/yellow] {device_config.device.name}\n"
-        f"[magenta]GPU Layers:[/magenta] all\n"
+        f"[magenta]GPU Layers:[/magenta] {gpu_layers_display}\n"
         f"[cyan]Context:[/cyan] {ctx_size}",
         title="Configuration"
     ))
@@ -1141,7 +1280,7 @@ def ollama_serve(
             host=host,
             port=port,
             ctx_size=ctx_size,
-            n_gpu_layers=-1,
+            n_gpu_layers=n_gpu_layers,
             device=device_str,
             gpu_backend=device_config.backend.value
         )
@@ -1149,7 +1288,7 @@ def ollama_serve(
         console.print(Panel(
             f"[green]Server running at:[/green] http://{host}:{port}\n"
             f"[blue]OpenAI API:[/blue] http://{host}:{port}/v1\n"
-            f"[magenta]Backend:[/magenta] llama.cpp\n"
+            f"[magenta]Backend:[/magenta] {device_config.backend.value}\n"
             f"[yellow]Press Ctrl+C to stop[/yellow]",
             title="moxing server"
         ))
@@ -1157,14 +1296,26 @@ def ollama_serve(
         server.start(wait=False)
         
         import time
-        time.sleep(2)
+        time.sleep(3)
         
         if server._process and server._process.poll() is not None:
             stdout, stderr = server._process.communicate()
             console.print(f"\n[red bold]Server failed to start![/red bold]")
-            for line in (stderr or "").strip().split("\n")[-15:]:
-                if line.strip():
-                    console.print(f"[red]{line}[/red]")
+            console.print(f"[dim]Exit code: {server._process.returncode}[/dim]")
+            if stdout:
+                console.print(f"[dim]stdout:[/dim]")
+                for line in stdout.strip().split("\n")[-20:]:
+                    if line.strip():
+                        console.print(f"[dim]  {line}[/dim]")
+            if stderr:
+                console.print(f"[red]stderr:[/red]")
+                for line in stderr.strip().split("\n")[-20:]:
+                    if line.strip():
+                        console.print(f"[red]  {line}[/red]")
+            console.print(f"\n[yellow]Troubleshooting tips:[/yellow]")
+            console.print(f"  • Check if the model file is valid: {gguf_path}")
+            console.print(f"  • Try with smaller context: -c 4096")
+            console.print(f"  • Try GPU mode: -d gpu0 -b vulkan")
             raise typer.Exit(1)
         
         while server.is_running():
@@ -1176,6 +1327,8 @@ def ollama_serve(
             server.stop()
     except RuntimeError as e:
         console.print(f"[red]Runtime error: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
         raise typer.Exit(1)
     except Exception as e:
         console.print(f"[red]Unexpected error: {e}[/red]")
