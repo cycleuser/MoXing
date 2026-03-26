@@ -380,7 +380,7 @@ class BinaryManager:
     
     def has_backend_binaries(self, backend: str) -> bool:
         """Check if binaries are available for a specific backend."""
-        for dir_path in [self.get_binary_dir(backend), self.get_cache_dir(backend)]:
+        for dir_path in [self.get_cache_dir(backend), self.get_binary_dir(backend)]:
             if not dir_path.exists():
                 continue
             
@@ -395,7 +395,7 @@ class BinaryManager:
             else:
                 libs = list(dir_path.glob("*.so*"))
             
-            if len(libs) >= 3:
+            if len(libs) >= 1:
                 return True
         
         return False
