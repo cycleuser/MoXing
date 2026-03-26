@@ -7,6 +7,7 @@ import sys
 import json
 import time
 import signal
+import socket
 import subprocess
 import threading
 from pathlib import Path
@@ -18,6 +19,39 @@ import httpx
 from rich.console import Console
 
 console = Console()
+
+
+def find_available_port(start_port: int = 8080, max_attempts: int = 100) -> int:
+    """Find an available port starting from start_port.
+    
+    Args:
+        start_port: Port to start searching from
+        max_attempts: Maximum number of ports to try
+    
+    Returns:
+        Available port number
+    """
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                s.bind(('127.0.0.1', port))
+                return port
+        except OSError:
+            continue
+    
+    raise RuntimeError(f"No available port found in range {start_port}-{start_port + max_attempts}")
+
+
+def is_port_in_use(port: int, host: str = '127.0.0.1') -> bool:
+    """Check if a port is already in use."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            s.bind((host, port))
+            return False
+    except OSError:
+        return True
 
 
 @dataclass
@@ -44,13 +78,17 @@ class ServerConfig:
     auto_ctx: bool = True
 
 
-def _find_binary() -> Path:
-    """Find llama-server binary using BinaryManager."""
+def _find_binary(backend: str = "auto") -> Path:
+    """Find llama-server binary using BinaryManager.
+    
+    Args:
+        backend: Backend type (auto, vulkan, cuda, rocm, metal, cpu)
+    """
     from moxing.binaries import get_binary_manager
     
-    manager = get_binary_manager()
+    manager = get_binary_manager(backend)
     if not manager.has_binaries():
-        console.print("[blue]Downloading llama.cpp binaries...[/blue]")
+        console.print(f"[blue]Downloading llama.cpp binaries for {manager.backend}...[/blue]")
         manager.download_binaries()
     
     return manager.get_binary_path("llama-server")
@@ -150,9 +188,17 @@ class LlamaServer:
             self.ctx_size = 4096
         
     @staticmethod
-    def get_binary_path() -> Path:
-        """Get the path to the llama-server binary for current platform."""
-        return _find_binary()
+    def get_binary_path(backend: str = "auto") -> Path:
+        """Get the path to the llama-server binary for current platform.
+        
+        Args:
+            backend: Backend type (auto, vulkan, cuda, rocm, metal, cpu)
+        """
+        return _find_binary(backend)
+    
+    def _get_binary_for_backend(self) -> Path:
+        """Get the correct binary for the configured backend."""
+        return _find_binary(self.gpu_backend)
     
     @staticmethod
     def detect_gpus() -> List[GPUInfo]:
@@ -192,7 +238,7 @@ class LlamaServer:
     def _build_args(self) -> List[str]:
         """Build command line arguments."""
         args = [
-            str(self.get_binary_path()),
+            str(self._get_binary_for_backend()),
             "-m", str(self.model),
             "--host", self.host,
             "--port", str(self.port),
@@ -200,7 +246,7 @@ class LlamaServer:
             "-ngl", str(self.n_gpu_layers) if self.n_gpu_layers >= 0 else "all",
         ]
         
-        if self.device != "auto":
+        if self.device != "auto" and self.device != "CPU" and self.n_gpu_layers != 0:
             args.extend(["-dev", self.device])
             
         if self.gpu_backend != "auto":
@@ -220,33 +266,51 @@ class LlamaServer:
         """Start the server."""
         if self._process is not None:
             raise RuntimeError("Server is already running")
-            
+        
+        binary_path = self._get_binary_for_backend()
+        
+        if not binary_path.exists():
+            raise RuntimeError(f"Binary not found: {binary_path}")
+        
         args = self._build_args()
         console.print(f"[blue]Starting llama-server...[/blue]")
-        console.print(f"[dim]Command: {' '.join(args[:6])}...[/dim]")
+        console.print(f"[dim]Binary: {binary_path}[/dim]")
+        console.print(f"[dim]Command: {' '.join(args)}[/dim]")
+        console.print(f"[dim]Working dir: {binary_path.parent}[/dim]")
+        console.print(f"[dim]Model: {self.model}[/dim]")
+        console.print(f"[dim]Backend: {self.gpu_backend}[/dim]")
+        console.print(f"[dim]GPU layers: {self.n_gpu_layers}[/dim]")
+        console.print(f"[dim]Context: {self.ctx_size}[/dim]")
         
-        self._process = subprocess.Popen(
-            args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            encoding='utf-8',
-            errors='replace',
-            cwd=str(self.get_binary_path().parent)
-        )
+        try:
+            self._process = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding='utf-8',
+                errors='replace',
+                cwd=str(binary_path.parent)
+            )
+        except Exception as e:
+            console.print(f"[red]Failed to start process: {e}[/red]")
+            raise RuntimeError(f"Failed to start server: {e}")
         
         if wait:
             self._wait_for_server(timeout)
         else:
-            time.sleep(1.0)
+            time.sleep(2.0)
             if self._process.poll() is not None:
                 stdout, stderr = self._process.communicate()
                 console.print(f"\n[red bold]Server failed to start![/red bold]")
+                console.print(f"[dim]Exit code: {self._process.returncode}[/dim]")
+                if stdout:
+                    console.print(f"[dim]stdout:[/dim]")
+                    for line in stdout.strip().split("\n")[-20:]:
+                        console.print(f"[dim]  {line}[/dim]")
                 if stderr:
-                    for line in stderr.strip().split("\n")[-15:]:
-                        if any(kw in line.lower() for kw in ["error", "failed", "warning"]):
-                            console.print(f"[red]{line}[/red]")
-                        else:
-                            console.print(f"[dim]{line}[/dim]")
+                    console.print(f"[red]stderr:[/red]")
+                    for line in stderr.strip().split("\n")[-20:]:
+                        console.print(f"[red]  {line}[/red]")
                 raise RuntimeError("Server failed to start")
             
             self._start_monitor()
@@ -283,7 +347,9 @@ class LlamaServer:
                 time.sleep(0.5)
             
             if self._process and self._process.poll() is not None:
-                console.print(f"\n[red bold]Server crashed![/red bold]")
+                exit_code = self._process.returncode
+                console.print(f"\n[red bold]Server crashed! (exit code: {exit_code})[/red bold]")
+                console.print(f"[dim]Check the model path and binary compatibility.[/dim]")
         
         monitor_thread = threading.Thread(target=monitor, daemon=True)
         monitor_thread.start()

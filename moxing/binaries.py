@@ -348,21 +348,101 @@ class BinaryManager:
         b = backend or self.backend
         return self.cache_dir / f"{self.platform_name}-{b}"
     
-    def get_binary_path(self, name: str = "llama-server") -> Path:
-        """Get path to a binary, checking bundled then cache."""
+    def get_binary_path(self, name: str = "llama-server", backend: Optional[str] = None) -> Path:
+        """Get path to a binary, checking bundled then cache.
+        
+        Args:
+            name: Binary name (e.g., 'llama-server', 'llama-cli')
+            backend: Specific backend to use (e.g., 'vulkan', 'cuda', 'cpu'). 
+                     If None, uses the instance's resolved backend.
+        """
+        b = backend or self.backend
         binary_name = name if name.endswith(self.binary_extension) else name + self.binary_extension
         
-        bundled_dir = self.get_binary_dir()
+        bundled_dir = self.get_binary_dir(b)
         bundled_path = bundled_dir / binary_name
         if bundled_path.exists():
             return bundled_path
         
-        cache_dir = self.get_cache_dir()
+        cache_dir = self.get_cache_dir(b)
         cache_path = cache_dir / binary_name
         if cache_path.exists():
             return cache_path
         
-        return self._download_and_get_path(name)
+        if backend:
+            return self._download_and_get_path(name, backend)
+        
+        return self._download_and_get_path(name, self.backend)
+    
+    def get_binary_path_for_backend(self, name: str, backend: str) -> Path:
+        """Get binary path for a specific backend, downloading if necessary."""
+        return self.get_binary_path(name, backend)
+    
+    def has_backend_binaries(self, backend: str) -> bool:
+        """Check if binaries are available for a specific backend."""
+        for dir_path in [self.get_binary_dir(backend), self.get_cache_dir(backend)]:
+            if not dir_path.exists():
+                continue
+            
+            server = dir_path / f"llama-server{self.binary_extension}"
+            if not server.exists():
+                continue
+            
+            if sys.platform == "win32":
+                libs = list(dir_path.glob("*.dll"))
+            elif sys.platform == "darwin":
+                libs = list(dir_path.glob("*.dylib"))
+            else:
+                libs = list(dir_path.glob("*.so*"))
+            
+            if len(libs) >= 3:
+                return True
+        
+        return False
+    
+    def list_available_backends(self) -> Dict[str, bool]:
+        """List all backends and their availability status."""
+        backends = {}
+        for backend in ["cuda", "vulkan", "rocm", "metal", "cpu"]:
+            backends[backend] = self.has_backend_binaries(backend)
+        return backends
+    
+    def download_all_binaries(self, force: bool = False, quiet: bool = False) -> Dict[str, bool]:
+        """Download binaries for all supported backends.
+        
+        Returns:
+            Dict mapping backend name to download success status
+        """
+        results = {}
+        
+        backends_to_download = BACKEND_PRIORITY.get(PlatformDetector.get_os(), ["cpu"])
+        
+        for backend in backends_to_download:
+            if not quiet:
+                console.print(f"[blue]Downloading binaries for {backend}...[/blue]")
+            
+            try:
+                self.download_binaries_for_backend(backend, force=force, quiet=quiet)
+                results[backend] = True
+                if not quiet:
+                    console.print(f"[green]✓ {backend} binaries downloaded[/green]")
+            except Exception as e:
+                results[backend] = False
+                if not quiet:
+                    console.print(f"[red]✗ {backend} failed: {e}[/red]")
+        
+        return results
+    
+    def download_binaries_for_backend(self, backend: str, force: bool = False, quiet: bool = False) -> Path:
+        """Download binaries for a specific backend."""
+        original_backend = self._requested_backend
+        try:
+            self._requested_backend = backend
+            self._resolved_backend = None
+            return self.download_binaries(force=force, quiet=quiet)
+        finally:
+            self._requested_backend = original_backend
+            self._resolved_backend = None
     
     def has_binaries(self) -> bool:
         """Check if binaries are available (bundled or cached)."""

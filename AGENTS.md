@@ -36,8 +36,10 @@ twine upload dist/*.whl                   # Upload to PyPI
 moxing devices                              # List GPU devices
 moxing download Tesslate/OmniCoder-9B-GGUF  # Download model
 moxing serve ./model.gguf -p 8080           # Start server
+moxing serve ./model.gguf -d gpu0 -b vulkan # Start with specific device
 moxing bench ./model.gguf                   # Benchmark model
 moxing ollama list                          # List Ollama models
+moxing ollama serve model -d gpu1 -b cuda   # Serve Ollama with device
 moxing compress pack model.gguf -a zstd     # Compress GGUF
 moxing compress cache --size                # Check cache size
 ```

@@ -23,11 +23,17 @@ Binaries are downloaded automatically on first use (~60 MB). No manual setup req
 # Serve an Ollama model
 moxing ollama serve llama3.2
 
+# Serve with specific device and backend
+moxing ollama serve llama3.2 -d gpu0 -b vulkan
+
 # Serve from HuggingFace
 moxing serve Qwen/Qwen2.5-7B-Instruct-GGUF
 
-# Serve a local GGUF file
-moxing serve ./model.gguf --port 8080
+# Serve a local GGUF file with specific device
+moxing serve ./model.gguf --port 8080 -d gpu1 -b cuda
+
+# List available devices
+moxing devices
 ```
 
 Then use OpenAI API:
@@ -99,6 +105,69 @@ pip install moxing[vulkan] # Cross-platform GPU
 pip install moxing[metal]  # Apple Silicon
 pip install moxing[rocm]   # AMD GPU
 pip install moxing[cpu]    # CPU only
+```
+
+## Device Selection
+
+List available devices and their IDs:
+
+```bash
+moxing devices
+```
+
+Select a specific device and backend when serving:
+
+```bash
+# Use GPU 0 with Vulkan backend
+moxing serve model.gguf -d gpu0 -b vulkan
+
+# Use GPU 1 with CUDA backend
+moxing serve model.gguf -d gpu1 -b cuda
+
+# Use CPU only
+moxing serve model.gguf -d cpu
+
+# Run multiple instances on different devices (auto port)
+moxing serve model1.gguf -d gpu0 --auto-port &
+moxing serve model2.gguf -d gpu1 --auto-port &
+moxing serve model3.gguf -d cpu --auto-port &
+
+# Or specify ports manually
+moxing serve model1.gguf -d gpu0 -p 8080 &
+moxing serve model2.gguf -d gpu1 -p 8081 &
+moxing serve model3.gguf -d cpu -p 8082 &
+```
+
+Device options:
+- `-d gpu0`, `-d gpu1`, ... - Select GPU by index
+- `-d cpu` - Use CPU only
+- `-d auto` - Auto-select best device (default)
+
+Port options:
+- `-p 8080` - Use specific port
+- `-p 0` or `--auto-port` - Auto-find available port
+
+Backend options:
+- `-b vulkan` - Cross-platform GPU (AMD, Intel, NVIDIA)
+- `-b cuda` - NVIDIA GPU
+- `-b rocm` - AMD GPU (Linux)
+- `-b metal` - Apple Silicon (macOS)
+- `-b cpu` - CPU only
+- `-b auto` - Auto-detect (default)
+
+### Download Multiple Backend Binaries
+
+Download binaries for all supported backends to enable device switching:
+
+```bash
+# List available backends
+moxing download-binaries --list
+
+# Download specific backend
+moxing download-binaries --backend vulkan
+
+# Download all backends for multi-device support
+moxing download-binaries --backend all
 ```
 
 ## Model Sources

@@ -134,13 +134,14 @@ class DeviceDetector:
         except Exception as e:
             console.print(f"[yellow]Warning: Device detection failed: {e}[/yellow]")
         
-        if not self._devices:
-            self._devices.append(Device(
-                index=0,
-                name="CPU",
-                backend=BackendType.CPU,
-                memory_mb=0
-            ))
+        self._devices.append(Device(
+            index=0,
+            name="CPU",
+            backend=BackendType.CPU,
+            memory_mb=0,
+            free_memory_mb=0,
+            vendor="cpu"
+        ))
         
         return self._devices
     
@@ -253,13 +254,108 @@ class DeviceDetector:
         
         return -1, ctx, "; ".join(notes)
     
+    def get_device_by_name(self, device_name: str) -> Optional[Device]:
+        """Get device by name like 'gpu0', 'gpu1', 'cpu'.
+        
+        Args:
+            device_name: Device name (e.g., 'gpu0', 'gpu1', 'cpu', 'vulkan0', 'cuda0')
+        
+        Returns:
+            Device or None if not found
+        """
+        if not self._devices:
+            self.detect()
+        
+        device_name = device_name.lower().strip()
+        
+        if device_name == "cpu":
+            for d in self._devices:
+                if d.backend == BackendType.CPU:
+                    return d
+            return Device(index=0, name="CPU", backend=BackendType.CPU)
+        
+        if device_name.startswith("gpu"):
+            try:
+                idx = int(device_name[3:])
+                for d in self._devices:
+                    if d.index == idx and d.backend != BackendType.CPU:
+                        return d
+            except ValueError:
+                pass
+        
+        for backend in ["vulkan", "cuda", "rocm", "metal"]:
+            if device_name.startswith(backend):
+                try:
+                    idx = int(device_name[len(backend):])
+                    for d in self._devices:
+                        if d.index == idx and d.backend.value == backend:
+                            return d
+                except ValueError:
+                    pass
+        
+        for d in self._devices:
+            if d.name.lower() == device_name:
+                return d
+        
+        return None
+    
+    def get_device_config_by_name(
+        self, 
+        device_name: str, 
+        backend_name: Optional[str] = None,
+        model_size_gb: float = 0
+    ) -> DeviceConfig:
+        """Get device config by device name and optional backend.
+        
+        Args:
+            device_name: Device name (e.g., 'gpu0', 'gpu1', 'cpu')
+            backend_name: Backend name (e.g., 'vulkan', 'cuda', 'auto')
+            model_size_gb: Model size for context calculation
+        
+        Returns:
+            DeviceConfig
+        """
+        device = self.get_device_by_name(device_name)
+        
+        if device is None:
+            console.print(f"[yellow]Device '{device_name}' not found, using auto-detection[/yellow]")
+            return self.get_best_device(model_size_gb)
+        
+        if backend_name and backend_name != "auto":
+            try:
+                backend = BackendType(backend_name.lower())
+            except ValueError:
+                console.print(f"[yellow]Unknown backend '{backend_name}', using device backend[/yellow]")
+                backend = device.backend
+        else:
+            backend = device.backend
+        
+        if device.backend == BackendType.CPU or backend == BackendType.CPU:
+            return DeviceConfig(
+                backend=BackendType.CPU,
+                device=device,
+                n_gpu_layers=0,
+                recommended_ctx=4096,
+                notes="Using CPU only"
+            )
+        
+        n_gpu_layers, ctx, notes = self._calculate_config(device, model_size_gb)
+        
+        return DeviceConfig(
+            backend=backend,
+            device=device,
+            n_gpu_layers=n_gpu_layers,
+            recommended_ctx=ctx,
+            notes=notes
+        )
+    
     def list_devices(self) -> None:
         """Print a table of available devices."""
         if not self._devices:
             self.detect()
         
-        table = Table(title="Available Devices")
-        table.add_column("#", style="cyan", width=3)
+        table = Table(title="Available Devices (use -d option to select)")
+        table.add_column("Device ID", style="cyan", width=10)
         table.add_column("Name", style="green")
         table.add_column("Backend", style="magenta")
         table.add_column("Memory", style="yellow")
@@ -269,8 +365,14 @@ class DeviceDetector:
         for device in self._devices:
             mem = f"{device.memory_gb:.1f}GB" if device.memory_mb > 0 else "-"
             free = f"{device.free_memory_gb:.1f}GB" if device.free_memory_mb > 0 else "-"
+            
+            if device.backend == BackendType.CPU:
+                device_id = "cpu"
+            else:
+                device_id = f"gpu{device.index}"
+            
             table.add_row(
-                str(device.index),
+                device_id,
                 device.name,
                 device.backend.value,
                 mem,
@@ -279,6 +381,8 @@ class DeviceDetector:
             )
         
         console.print(table)
+        console.print("\n[dim]Usage: moxing serve model.gguf -d gpu0 -b vulkan[/dim]")
+        console.print("[dim]        moxing ollama serve model -d gpu1 -b cuda[/dim]")
     
     def get_backend_env(self, backend: BackendType) -> dict:
         """Get environment variables for the specified backend."""
