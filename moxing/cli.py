@@ -1313,9 +1313,9 @@ def ollama_serve_impl(
                     if line.strip():
                         console.print(f"[red]  {line}[/red]")
             console.print(f"\n[yellow]Troubleshooting tips:[/yellow]")
-            console.print(f"  • Check if the model file is valid: {gguf_path}")
-            console.print(f"  • Try with smaller context: -c 4096")
-            console.print(f"  • Try GPU mode: -d gpu0 -b vulkan")
+            console.print(f"  • The GGUF format may be incompatible with llama.cpp")
+            console.print(f"  • Try: ollama run {model} (use Ollama directly)")
+            console.print(f"  • Or download a compatible GGUF from Hugging Face")
             raise typer.Exit(1)
         
         while server.is_running():
@@ -1409,26 +1409,10 @@ def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float, verbose:
             is_incompatible = any(p in stderr_lower for p in incompatible_patterns)
             
             if is_incompatible:
-                console.print(f"[yellow]Ollama GGUF is incompatible with llama.cpp[/yellow]")
-                console.print(f"[dim]Ollama uses a custom GGUF format. Downloading compatible version...[/dim]")
-                
-                hf_repo = _get_hf_repo_for_ollama_model(model)
-                if not hf_repo:
-                    console.print(f"[red]No compatible GGUF found on Hugging Face for: {model}[/red]")
-                    console.print(f"[dim]Suggestion: Download manually with:[/dim]")
-                    console.print(f"[cyan]  moxing download <repo>[/cyan]")
-                    console.print(f"[dim]Then serve with: moxing serve <path/to/model.gguf>[/dim]")
-                    return None
-                
-                console.print(f"[blue]Downloading from Hugging Face: {hf_repo}[/blue]")
-                
-                try:
-                    from moxing.models import download_model
-                    gguf_path = download_model(hf_repo)
-                    return gguf_path
-                except Exception as e:
-                    console.print(f"[red]Failed to download: {e}[/red]")
-                    return None
+                console.print(f"[yellow]Warning: GGUF format may not be fully compatible with llama.cpp[/yellow]")
+                console.print(f"[dim]The model may still work, but some features might be limited.[/dim]")
+                console.print(f"[dim]Using the Ollama GGUF file directly...[/dim]")
+                return ollama_gguf
             
             console.print(f"[green]GGUF is compatible[/green]")
             return ollama_gguf
