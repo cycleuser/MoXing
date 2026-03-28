@@ -1371,7 +1371,7 @@ def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float, verbose:
     ]
     
     try:
-        cmd = [str(llama_cli), "-m", str(ollama_gguf), "-n", "1", "-p", "x", "-c", "128", "--no-display-prompt"]
+        cmd = [str(llama_cli), "-m", str(ollama_gguf), "-n", "1", "-p", "x", "-c", "128", "--no-display-prompt", "-ngl", "0"]
         if verbose:
             console.print(f"[dim]Command: {' '.join(cmd)}[/dim]")
             console.print(f"[dim]Running subprocess.run with timeout=120s...[/dim]")
@@ -1382,7 +1382,8 @@ def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float, verbose:
             encoding='utf-8',
             errors='replace',
             timeout=120,
-            cwd=str(llama_cli.parent)
+            cwd=str(llama_cli.parent),
+            stdin=subprocess.DEVNULL
         )
         
         stdout = result.stdout or ""
