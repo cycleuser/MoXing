@@ -142,10 +142,60 @@ class PlatformDetector:
     @staticmethod
     def _has_amd() -> bool:
         try:
-            result = subprocess.run(["rocm-smi"], capture_output=True, timeout=5)
-            return result.returncode == 0
+            for cmd in ["amd-smi", "rocm-smi", "rocminfo"]:
+                try:
+                    result = subprocess.run([cmd], capture_output=True, timeout=5)
+                    if result.returncode == 0 and len(result.stdout) > 100:
+                        return True
+                except Exception:
+                    continue
+            
+            if sys.platform != "win32":
+                kfd_path = Path("/dev/kfd")
+                if kfd_path.exists():
+                    return True
+                
+                dri_path = Path("/dev/dri")
+                if dri_path.exists():
+                    for card in dri_path.glob("card*"):
+                        try:
+                            uevent = Path(f"/sys/class/drm/{card.name}/device/uevent")
+                            if uevent.exists():
+                                content = uevent.read_text()
+                                if "AMD" in content or "amdgpu" in content.lower():
+                                    return True
+                        except Exception:
+                            continue
+            
+            return False
         except Exception:
             return False
+    
+    @staticmethod
+    def check_amd_permission() -> tuple:
+        if sys.platform == "win32":
+            return True, None
+        
+        kfd_path = Path("/dev/kfd")
+        if not kfd_path.exists():
+            return False, "No AMD GPU device found (/dev/kfd does not exist)"
+        
+        if not os.access(kfd_path, os.R_OK | os.W_OK):
+            render_group = None
+            try:
+                stat_info = kfd_path.stat()
+                import grp
+                render_group = grp.getgrgid(stat_info.st_gid).gr_name
+            except Exception:
+                render_group = "render"
+            
+            message = f"Permission denied for AMD GPU device ({kfd_path}).\n"
+            message += f"Required group: {render_group}\n"
+            message += f"Fix: sudo usermod -aG {render_group} \"$USER\"\n"
+            message += "Then log out and log back in for changes to take effect."
+            return False, message
+        
+        return True, None
 
 
 def detect_bundled_platform() -> Optional[str]:
