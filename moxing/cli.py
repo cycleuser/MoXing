@@ -280,10 +280,22 @@ def serve(
         
         device_str = "auto"
         if device_config.device.backend != BackendType.CPU:
-            if device_config.backend == BackendType.METAL:
+            has_amd_perm, _ = detector.check_amd_permission()
+            
+            if device_config.backend == BackendType.ROCM and not has_amd_perm:
+                console.print("[yellow]Note: Using auto device selection (ROCm permission denied)[/yellow]")
+                device_str = "auto"
+            elif device_config.backend == BackendType.VULKAN:
+                device_str = "auto"
+                console.print("[dim]Using auto Vulkan device selection[/dim]")
+            elif device_config.backend == BackendType.METAL:
                 device_str = f"MTL{device_config.device.index}"
+            elif device_config.backend == BackendType.ROCM:
+                device_str = f"HIP{device_config.device.index}"
+            elif device_config.backend == BackendType.CUDA:
+                device_str = f"CUDA{device_config.device.index}"
             else:
-                device_str = f"{device_config.backend.value.upper()}{device_config.device.index}"
+                device_str = "auto"
         
         console.print(Panel(
             f"[green]Model:[/green] {model}\n"
@@ -1242,15 +1254,36 @@ def ollama_serve_impl(
     else:
         device_config = detector.get_best_device(ollama_model.size_gb)
     
+    has_amd_perm, amd_perm_msg = detector.check_amd_permission()
+    
+    if device_config.backend == BackendType.ROCM and not has_amd_perm:
+        console.print(f"\n[yellow bold]AMD ROCm Permission Issue[/yellow bold]")
+        console.print(f"[yellow]{amd_perm_msg}[/yellow]")
+        console.print(f"\n[blue]Switching to Vulkan backend for AMD GPU...[/blue]")
+        console.print(f"[dim]ROCm requires: sudo usermod -aG render \"$USER\"[/dim]")
+        console.print(f"[dim]After adding group, log out and log back in.[/dim]\n")
+        
+        device_config.backend = BackendType.VULKAN
+    
     is_cpu = device_config.backend == BackendType.CPU
     
     n_gpu_layers = 0 if is_cpu else -1
     device_str = "auto"
     if not is_cpu:
-        if device_config.backend == BackendType.METAL:
+        if device_config.backend == BackendType.ROCM and not has_amd_perm:
+            console.print("[yellow]Note: Using auto device selection (ROCm permission denied)[/yellow]")
+            device_str = "auto"
+        elif device_config.backend == BackendType.VULKAN:
+            device_str = "auto"
+            console.print("[dim]Using auto Vulkan device selection[/dim]")
+        elif device_config.backend == BackendType.METAL:
             device_str = f"MTL{device_config.device.index}"
+        elif device_config.backend == BackendType.ROCM:
+            device_str = f"HIP{device_config.device.index}"
+        elif device_config.backend == BackendType.CUDA:
+            device_str = f"CUDA{device_config.device.index}"
         else:
-            device_str = f"{device_config.backend.value.upper()}{device_config.device.index}"
+            device_str = "auto"
     
     gpu_layers_display = "0 (CPU)" if is_cpu else "all"
     
