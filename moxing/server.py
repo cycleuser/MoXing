@@ -76,6 +76,9 @@ class ServerConfig:
     verbose: bool = False
     gpu_backend: str = "auto"
     auto_ctx: bool = True
+    kv_cache_quant: str = "auto"
+    cpu_offload: bool = False
+    cpu_offload_layers: int = 0
 
 
 def _find_binary(backend: str = "auto") -> Path:
@@ -118,11 +121,13 @@ class LlamaServer:
         device: str = "auto",
         gpu_backend: str = "auto",
         auto_ctx: bool = True,
+        kv_cache_quant: str = "auto",
+        cpu_offload: bool = False,
+        cpu_offload_layers: int = 0,
         **kwargs
     ):
         model_path = Path(model)
         
-        # Handle compressed/split GGUF files transparently
         if model_path.exists():
             from moxing.gguf_compress import resolve_model_path, is_gguf_compressed
             if is_gguf_compressed(model_path):
@@ -139,6 +144,9 @@ class LlamaServer:
         self.device = device
         self.gpu_backend = gpu_backend
         self.auto_ctx = auto_ctx
+        self.kv_cache_quant = kv_cache_quant
+        self.cpu_offload = cpu_offload
+        self.cpu_offload_layers = cpu_offload_layers
         self.extra_args = kwargs
         
         self.ctx_size = ctx_size if ctx_size > 0 else 4096
@@ -251,6 +259,12 @@ class LlamaServer:
             
         if self.gpu_backend != "auto":
             os.environ["GGML_BACKEND"] = self.gpu_backend
+        
+        kv_cache_args = self._get_kv_cache_args()
+        args.extend(kv_cache_args)
+        
+        if self.cpu_offload and self.cpu_offload_layers > 0:
+            args.extend(["-ts", f"{self.n_gpu_layers - self.cpu_offload_layers},{self.cpu_offload_layers}"])
             
         for key, value in self.extra_args.items():
             key = key.replace("_", "-")
@@ -260,6 +274,44 @@ class LlamaServer:
             else:
                 args.extend([f"--{key}", str(value)])
                 
+        return args
+    
+    def _get_kv_cache_args(self) -> List[str]:
+        """Get KV cache optimization arguments."""
+        args = []
+        
+        if self.kv_cache_quant == "auto":
+            from moxing.kv_cache import recommend_cache_config, estimate_model_size_gb
+            
+            try:
+                model_size_gb = estimate_model_size_gb(str(self.model))
+                config = recommend_cache_config(
+                    model_size_gb=model_size_gb,
+                    available_vram_gb=8.0,
+                    desired_ctx_size=self.ctx_size,
+                )
+                
+                from moxing.kv_cache import get_llama_cpp_cache_args
+                args.extend(get_llama_cpp_cache_args(config))
+                
+                self._kv_cache_config = config
+            except Exception:
+                pass
+        else:
+            quant_map = {
+                "q8_0": "--kv-cache-q8-0",
+                "q5_0": "--kv-cache-q5-0",
+                "q4_0": "--kv-cache-q4-0",
+                "q4_1": "--kv-cache-q4-1",
+                "q3_k": "--kv-cache-q3-k",
+                "q2_k": "--kv-cache-q2-k",
+                "iq4_nl": "--kv-cache-iq4-nl",
+                "iq3_s": "--kv-cache-iq3-s",
+            }
+            
+            if self.kv_cache_quant in quant_map:
+                args.append(quant_map[self.kv_cache_quant])
+        
         return args
     
     def start(self, wait: bool = True, timeout: int = 60) -> "LlamaServer":

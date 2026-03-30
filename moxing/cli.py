@@ -104,29 +104,30 @@ def serve(
     auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
     force: bool = typer.Option(False, "-f", "--force", help="Force use specified backend without compatibility check"),
+    kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q5_0, q4_0, q3_k, iq3_s (3-bit TurboQuant)"),
+    cpu_offload: int = typer.Option(0, "--cpu-offload", help="Number of layers to offload to CPU (0=auto)"),
+    analyze_cache: bool = typer.Option(False, "--analyze-cache", help="Show KV cache analysis and exit"),
 ):
     """Start the LLM server with automatic configuration.
     
-    Backends:
-    - auto: Automatically choose best backend based on model compatibility
-    - vulkan: Cross-platform GPU (AMD, Intel, NVIDIA)
-    - cuda: NVIDIA GPU
-    - rocm: AMD GPU (Linux)
-    - metal: Apple Silicon (macOS)
-    - cpu: CPU only
+    KV Cache Quantization:
+    - auto: Automatically choose based on available memory
+    - f16: Full precision (16-bit)
+    - q8_0: 8-bit quantization (high quality)
+    - q5_0: 5-bit quantization (good quality)
+    - q4_0: 4-bit quantization (balanced)
+    - q3_k: 3-bit K-quantization (high compression)
+    - iq3_s: 3-bit TurboQuant-style (maximum compression)
     
-    Devices:
-    - auto: Automatically select best device
-    - gpu0, gpu1, ...: Specific GPU by index
-    - cpu: Use CPU only
-    - Run 'moxing devices' to list available devices
+    Memory Optimization:
+    - --cpu-offload N: Offload N layers to CPU RAM
+    - Use with large models when GPU memory is limited
     
     Examples:
-    - GGUF file: moxing serve model.gguf
-    - With device: moxing serve model.gguf -d gpu0 -b vulkan
-    - Auto port: moxing serve model.gguf --auto-port
-    - HuggingFace: moxing serve Qwen/Qwen2.5-3B-Instruct -b mlx
-    - Ollama model: moxing serve ollama:gemma3:4b
+    - Auto KV cache: moxing serve model.gguf
+    - 3-bit cache: moxing serve model.gguf --kv-cache iq3_s
+    - CPU offload: moxing serve model.gguf --cpu-offload 10
+    - Analyze cache: moxing serve model.gguf --analyze-cache
     """
     from moxing.runner import AutoRunner
     from moxing.mlx_server import MLXServer
@@ -162,7 +163,13 @@ def serve(
     
     model_path = model_file if model_file.exists() else None
     
-    # Check if it's a GGUF file by extension or by trying to parse it
+    if analyze_cache and model_path:
+        from moxing.kv_cache import print_cache_analysis, estimate_model_size_gb
+        
+        model_size = model_path.stat().st_size / (1024 ** 3)
+        print_cache_analysis(model_size, ctx_size if ctx_size > 0 else 4096)
+        raise typer.Exit()
+    
     is_gguf = False
     if model_path:
         if model_path.suffix == ".gguf" or str(model).endswith(".gguf"):
@@ -232,12 +239,16 @@ def serve(
         try:
             server = MLXServer(model=model, host=host, port=port)
             
+            model_short = Path(model).name[:20] if Path(model).exists() else model[:20]
+            server_title = f"{model_short} | Apple Silicon | MLX"
+            
             console.print(Panel(
-                f"[green]Server running at:[/green] http://{host}:{port}\n"
+                f"[green]Server:[/green] http://{host}:{port}\n"
                 f"[blue]OpenAI API:[/blue] http://{host}:{port}/v1\n"
                 f"[magenta]Backend:[/magenta] MLX (Apple Silicon)\n"
+                f"[cyan]Device:[/cyan] Apple GPU\n"
                 f"[yellow]Press Ctrl+C to stop[/yellow]",
-                title="moxing server (MLX)"
+                title=server_title
             ))
             
             server.start(wait=False)
@@ -303,9 +314,17 @@ def serve(
             f"[yellow]Device:[/yellow] {device_config.device.name}\n"
             f"[magenta]GPU Layers:[/magenta] {device_config.n_gpu_layers if device_config.n_gpu_layers >= 0 else 'all'}\n"
             f"[cyan]Context:[/cyan] {ctx_size}\n"
-            f"[dim]{device_config.notes}[/dim]",
+            f"[dim]KV Cache: {kv_cache}[/dim]",
             title="Configuration"
         ))
+        
+        device_display = device_config.device.name[:30]
+        backend_display = device_config.backend.value.upper()
+        model_short = Path(model).name[:20] if Path(model).exists() else model[:20]
+        server_title = f"{model_short} | {device_display} | {backend_display}"
+        
+        if kv_cache != "f16":
+            server_title += f" | {kv_cache}"
         
         try:
             server = LlamaServer(
@@ -315,15 +334,24 @@ def serve(
                 ctx_size=ctx_size,
                 n_gpu_layers=device_config.n_gpu_layers,
                 device=device_str,
-                gpu_backend=device_config.backend.value
+                gpu_backend=device_config.backend.value,
+                kv_cache_quant=kv_cache,
+                cpu_offload=cpu_offload > 0,
+                cpu_offload_layers=cpu_offload,
             )
             
+            cache_info = f"\n[dim]KV Cache: {kv_cache}" if kv_cache != "auto" else ""
+            if cpu_offload > 0:
+                cache_info += f"\n[dim]CPU Offload: {cpu_offload} layers"
+            
             console.print(Panel(
-                f"[green]Server running at:[/green] http://{host}:{port}\n"
+                f"[green]Server:[/green] http://{host}:{port}\n"
                 f"[blue]OpenAI API:[/blue] http://{host}:{port}/v1\n"
                 f"[magenta]Backend:[/magenta] {device_config.backend.value}\n"
+                f"[cyan]Device:[/cyan] {device_config.device.name}"
+                f"{cache_info}\n"
                 f"[yellow]Press Ctrl+C to stop[/yellow]",
-                title="moxing server"
+                title=server_title
             ))
             
             server.start(wait=False)
@@ -565,6 +593,33 @@ def devices():
     detector = DeviceDetector()
     detector.detect()
     detector.list_devices()
+
+
+@app.command("cache")
+def cache_analysis(
+    model_size: float = typer.Argument(..., help="Model size in GB"),
+    ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size to analyze"),
+    vram: float = typer.Option(8.0, "--vram", help="Available VRAM in GB"),
+    benchmark: bool = typer.Option(False, "--benchmark", help="Run TurboQuant benchmark"),
+):
+    """Analyze KV cache memory usage and compression options.
+    
+    Shows memory requirements for different KV cache quantization methods including
+    Google's TurboQuant for 3-bit compression.
+    
+    Examples:
+        moxing cache 7.0
+        moxing cache 7.0 -c 8192 --vram 16.0
+        moxing cache 7.0 --benchmark
+    """
+    from moxing.kv_cache import print_cache_analysis
+    
+    if benchmark:
+        from moxing.turboquant import benchmark_turboquant
+        benchmark_turboquant()
+        return
+    
+    print_cache_analysis(model_size, ctx_size, vram)
 
 
 @app.command()
@@ -1146,20 +1201,24 @@ def ollama_serve(
     auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port if default is in use"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
     skip_check: bool = typer.Option(False, "--skip-check", help="Skip compatibility check"),
+    kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q4_0, tq3 (3-bit TurboQuant), tq2"),
+    cpu_offload: int = typer.Option(0, "--cpu-offload", help="Number of layers to offload to CPU"),
 ):
     """Serve an Ollama model with OpenAI-compatible API.
     
-    Uses moxing's llama.cpp to run the model with optimal GPU acceleration.
-    If the Ollama GGUF is incompatible, downloads a compatible version from Hugging Face.
+    KV Cache Quantization:
+    - auto: Automatically choose based on available memory
+    - q8_0: 8-bit (high quality)
+    - q4_0: 4-bit (balanced)
+    - tq3: TurboQuant 3-bit (recommended, 5.3x compression)
+    - tq2: TurboQuant 2-bit (extreme, 8x compression)
     
     Examples:
         moxing ollama serve gemma3:4b
-        moxing ollama serve llama3.2:3b -c 8192
-        moxing ollama serve omnicoder-9b -d gpu0 -b vulkan
-        moxing ollama serve omnicoder-9b --auto-port  # Auto-find port
-        moxing ollama serve omnicoder-9b --skip-check
+        moxing ollama serve omnicoder-9b --kv-cache tq3
+        moxing ollama serve omnicoder-9b --cpu-offload 10
     """
-    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, skip_check)
+    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, skip_check, kv_cache, cpu_offload)
 
 
 def ollama_serve_impl(
@@ -1172,6 +1231,8 @@ def ollama_serve_impl(
     auto_port: bool = False,
     verbose: bool = False,
     skip_check: bool = False,
+    kv_cache: str = "auto",
+    cpu_offload: int = 0,
 ):
     """Implementation of ollama serve with device/backend selection."""
     from moxing.ollama import OllamaClient, get_ollama_model
@@ -1287,6 +1348,14 @@ def ollama_serve_impl(
     
     gpu_layers_display = "0 (CPU)" if is_cpu else "all"
     
+    device_display = device_config.device.name
+    backend_display = device_config.backend.value.upper()
+    model_short = ollama_model.full_name[:20]
+    server_title = f"{model_short} | {device_display[:30]} | {backend_display}"
+    
+    if kv_cache != "auto" and kv_cache != "f16":
+        server_title += f" | {kv_cache}"
+    
     console.print(Panel(
         f"[green]Model:[/green] {ollama_model.full_name}\n"
         f"[blue]Size:[/blue] {ollama_model.size_gb:.1f} GB\n"
@@ -1294,15 +1363,20 @@ def ollama_serve_impl(
         f"[yellow]Port:[/yellow] {port}\n"
         f"[magenta]Backend:[/magenta] {device_config.backend.value}\n"
         f"[cyan]Device:[/cyan] {device_config.device.name}",
-        title="Ollama Model"
+        title=f"Ollama: {model_short}"
     ))
+    
+    cache_info = f"\n[dim]KV Cache: {kv_cache}" if kv_cache != "auto" else ""
+    if cpu_offload > 0:
+        cache_info += f"\n[dim]CPU Offload: {cpu_offload} layers"
     
     console.print(Panel(
         f"[green]Model:[/green] {ollama_model.full_name}\n"
         f"[blue]Backend:[/blue] {device_config.backend.value}\n"
         f"[yellow]Device:[/yellow] {device_config.device.name}\n"
         f"[magenta]GPU Layers:[/magenta] {gpu_layers_display}\n"
-        f"[cyan]Context:[/cyan] {ctx_size}",
+        f"[cyan]Context:[/cyan] {ctx_size}"
+        f"{cache_info}",
         title="Configuration"
     ))
     
@@ -1315,15 +1389,19 @@ def ollama_serve_impl(
             ctx_size=ctx_size,
             n_gpu_layers=n_gpu_layers,
             device=device_str,
-            gpu_backend=device_config.backend.value
+            gpu_backend=device_config.backend.value,
+            kv_cache_quant=kv_cache,
+            cpu_offload=cpu_offload > 0,
+            cpu_offload_layers=cpu_offload,
         )
         
         console.print(Panel(
-            f"[green]Server running at:[/green] http://{host}:{port}\n"
+            f"[green]Server:[/green] http://{host}:{port}\n"
             f"[blue]OpenAI API:[/blue] http://{host}:{port}/v1\n"
             f"[magenta]Backend:[/magenta] {device_config.backend.value}\n"
+            f"[cyan]Device:[/cyan] {device_config.device.name}\n"
             f"[yellow]Press Ctrl+C to stop[/yellow]",
-            title="moxing server"
+            title=server_title
         ))
         
         server.start(wait=False)
