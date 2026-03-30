@@ -24,6 +24,11 @@ app = typer.Typer(
 )
 
 
+class UnsupportedArchitectureError(Exception):
+    """Raised when a model architecture is not supported by llama.cpp."""
+    pass
+
+
 def version_callback(value: bool):
     if value:
         from moxing import __version__
@@ -1286,6 +1291,19 @@ def ollama_serve_impl(
         
         try:
             gguf_path = _get_compatible_gguf(model, gguf_path, ollama_model.size_gb, verbose)
+        except UnsupportedArchitectureError as e:
+            console.print(f"\n[red bold]Unsupported Model Architecture[/red bold]")
+            console.print(f"[red]{e}[/red]")
+            console.print(f"\n[yellow]This model uses an architecture not supported by standard llama.cpp.[/yellow]")
+            console.print(f"[dim]Ollama's forked llama.cpp has patches for this model.[/dim]")
+            console.print(f"\n[green]Options:[/green]")
+            console.print(f"  1. Use Ollama directly:")
+            console.print(f"     [cyan]ollama run {model}[/cyan]")
+            console.print(f"  2. Try MLX backend (macOS only):")
+            console.print(f"     [cyan]moxing ollama serve {model} -b mlx[/cyan]")
+            console.print(f"  3. Find a compatible GGUF on HuggingFace:")
+            console.print(f"     [dim]Look for Q4_K_M or similar quantizations[/dim]")
+            raise typer.Exit(1)
         except Exception as e:
             console.print(f"[red]Error in compatibility check: {e}[/red]")
             import traceback
@@ -1328,25 +1346,89 @@ def ollama_serve_impl(
     
     is_cpu = device_config.backend == BackendType.CPU
     
+    available_vram_gb = 0
+    if not is_cpu:
+        if device_config.device.memory_mb > 0:
+            available_vram_gb = device_config.device.memory_gb * 0.85
+        else:
+            if device_config.backend == BackendType.ROCM:
+                if "7900" in device_config.device.name:
+                    available_vram_gb = 24 * 0.85
+                elif "610M" in device_config.device.name:
+                    available_vram_gb = 0.5
+                else:
+                    available_vram_gb = 8.0
+            elif device_config.backend == BackendType.CUDA:
+                available_vram_gb = 8.0
+            else:
+                available_vram_gb = 4.0
+    
+    model_size_gb = ollama_model.size_gb
+    
+    if not is_cpu and available_vram_gb > 0 and model_size_gb > available_vram_gb:
+        console.print(f"\n[yellow]Warning: Model ({model_size_gb:.1f}GB) > Available VRAM ({available_vram_gb:.1f}GB)[/yellow]")
+        
+        if cpu_offload == 0:
+            total_layers = 40
+            if model_size_gb > 30:
+                total_layers = 80
+            elif model_size_gb > 15:
+                total_layers = 60
+            elif model_size_gb > 8:
+                total_layers = 40
+            else:
+                total_layers = 32
+            
+            ratio = available_vram_gb / model_size_gb
+            gpu_layers = int(total_layers * ratio * 0.7)
+            cpu_offload = total_layers - gpu_layers
+            
+            console.print(f"[blue]Auto offloading {cpu_offload}/{total_layers} layers to CPU[/blue]")
+            console.print(f"[dim]Use --cpu-offload N to customize[/dim]\n")
+    
     n_gpu_layers = 0 if is_cpu else -1
+    if cpu_offload > 0 and not is_cpu:
+        total_layers = 40
+        if ollama_model.size_gb > 30:
+            total_layers = 80
+        elif ollama_model.size_gb > 15:
+            total_layers = 60
+        elif ollama_model.size_gb > 8:
+            total_layers = 40
+        else:
+            total_layers = 32
+        
+        n_gpu_layers = total_layers - cpu_offload
+        if n_gpu_layers < 0:
+            n_gpu_layers = 0
+    
     device_str = "auto"
     if not is_cpu:
-        if device_config.backend == BackendType.ROCM and not has_amd_perm:
-            console.print("[yellow]Note: Using auto device selection (ROCm permission denied)[/yellow]")
+        if device_config.backend == BackendType.ROCM:
             device_str = "auto"
+            console.print("[dim]Using auto ROCm device selection[/dim]")
         elif device_config.backend == BackendType.VULKAN:
             device_str = "auto"
             console.print("[dim]Using auto Vulkan device selection[/dim]")
         elif device_config.backend == BackendType.METAL:
             device_str = f"MTL{device_config.device.index}"
-        elif device_config.backend == BackendType.ROCM:
-            device_str = f"HIP{device_config.device.index}"
         elif device_config.backend == BackendType.CUDA:
             device_str = f"CUDA{device_config.device.index}"
         else:
             device_str = "auto"
     
-    gpu_layers_display = "0 (CPU)" if is_cpu else "all"
+    gpu_layers_display = "0 (CPU)" if is_cpu else (f"{n_gpu_layers}" if n_gpu_layers > 0 else "all")
+    if cpu_offload > 0 and not is_cpu:
+        total_layers = 40
+        if ollama_model.size_gb > 30:
+            total_layers = 80
+        elif ollama_model.size_gb > 15:
+            total_layers = 60
+        elif ollama_model.size_gb > 8:
+            total_layers = 40
+        else:
+            total_layers = 32
+        gpu_layers_display = f"{n_gpu_layers}/{total_layers} (CPU: {cpu_offload})"
     
     device_display = device_config.device.name
     backend_display = device_config.backend.value.upper()
@@ -1422,11 +1504,45 @@ def ollama_serve_impl(
                 console.print(f"[red]stderr:[/red]")
                 for line in stderr.strip().split("\n")[-20:]:
                     if line.strip():
-                        console.print(f"[red]  {line}[/red]")
+                        console.print(f"[red]  {line}[/dim]")
+            
             console.print(f"\n[yellow]Troubleshooting tips:[/yellow]")
-            console.print(f"  • The GGUF format may be incompatible with llama.cpp")
-            console.print(f"  • Try: ollama run {model} (use Ollama directly)")
-            console.print(f"  • Or download a compatible GGUF from Hugging Face")
+            
+            error_lower = (stderr or "").lower()
+            
+            if "unknown model architecture" in error_lower:
+                import re
+                arch_match = re.search(r"unknown model architecture: '([^']+)'", error_lower)
+                arch_name = arch_match.group(1) if arch_match else "unknown"
+                console.print(f"  [red]✗ Model architecture '{arch_name}' not supported by llama.cpp[/red]")
+                console.print(f"\n  [yellow]This model requires Ollama's patched llama.cpp with custom patches.[/yellow]")
+                console.print(f"  [green]✓ Options:[/green]")
+                console.print(f"     1. Use Ollama directly:")
+                console.print(f"        [cyan]ollama run {model}[/cyan]")
+                console.print(f"     2. Find a compatible GGUF variant on HuggingFace")
+            elif server._process.returncode == -6:
+                console.print(f"  [red]✗ Server crashed (SIGABRT)[/red]")
+                if ollama_model.size_gb > 10:
+                    console.print(f"  [yellow]Model size ({ollama_model.size_gb:.1f}GB) may be too large for GPU[/yellow]")
+                    console.print(f"  [green]✓ Try CPU offloading:[/green]")
+                    console.print(f"      moxing ollama serve {model} -d gpu1 -b {device_config.backend.value} --cpu-offload 20")
+                else:
+                    console.print(f"  [yellow]This model may require special patches not in standard llama.cpp[/yellow]")
+                    console.print(f"  [green]✓ Use Ollama directly:[/green] ollama run {model}")
+            elif "out of memory" in error_lower or "cuda error" in error_lower or "hip error" in error_lower:
+                console.print(f"  [red]✗ GPU memory insufficient for model ({ollama_model.size_gb:.1f}GB)[/red]")
+                if cpu_offload == 0:
+                    console.print(f"  [green]✓ Try CPU offloading:[/green]")
+                    console.print(f"      moxing ollama serve {model} -d gpu1 -b {device_config.backend.value} --cpu-offload 20")
+                    console.print(f"  [green]✓ Or smaller context:[/green]")
+                    console.print(f"      moxing ollama serve {model} -d gpu1 -b {device_config.backend.value} -c 1024")
+                else:
+                    console.print(f"  [green]✓ Increase CPU offload:[/green]")
+                    console.print(f"      moxing ollama serve {model} -d gpu1 -b {device_config.backend.value} --cpu-offload 30")
+            else:
+                console.print(f"  • The GGUF format may be incompatible with llama.cpp")
+                console.print(f"  • Try: ollama run {model} (use Ollama directly)")
+                console.print(f"  • Or download a compatible GGUF from Hugging Face")
             raise typer.Exit(1)
         
         while server.is_running():
@@ -1481,6 +1597,11 @@ def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float, verbose:
         "done_getting_tensors",
     ]
     
+    fatal_patterns = [
+        "unknown model architecture",
+        "not supported by llama.cpp",
+    ]
+    
     try:
         cmd = [str(llama_cli), "-m", str(ollama_gguf), "-n", "1", "-p", "x", "-c", "128", 
                "--no-display-prompt", "-ngl", "0", "--no-conversation", "-st"]
@@ -1517,7 +1638,21 @@ def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float, verbose:
         
         if stderr:
             stderr_lower = stderr.lower()
+            is_fatal = any(p in stderr_lower for p in fatal_patterns)
             is_incompatible = any(p in stderr_lower for p in incompatible_patterns)
+            
+            if is_fatal:
+                console.print(f"[red]Error: Model architecture not supported by llama.cpp[/red]")
+                for line in stderr.strip().split("\n"):
+                    if "unknown model architecture" in line.lower():
+                        arch_match = line.split("'")
+                        if len(arch_match) >= 2:
+                            arch_name = arch_match[1]
+                            console.print(f"[red]  Architecture: {arch_name}[/red]")
+                raise UnsupportedArchitectureError(
+                    "Model architecture not supported by llama.cpp. "
+                    "This model requires Ollama's patched llama.cpp or MLX backend."
+                )
             
             if is_incompatible:
                 console.print(f"[yellow]Warning: GGUF format may not be fully compatible with llama.cpp[/yellow]")
