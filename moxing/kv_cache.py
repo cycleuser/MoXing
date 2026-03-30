@@ -268,30 +268,28 @@ def get_llama_cpp_cache_args(config: KVCacheConfig) -> List[str]:
     """Convert KVCacheConfig to llama.cpp command line arguments."""
     args = []
     
-    if config.enable_flash_attention:
-        args.append("--flash-attn")
-    
     quant_map = {
-        KVCacheQuantType.F16: None,
-        KVCacheQuantType.Q8_0: "--kv-cache-q8-0",
-        KVCacheQuantType.Q4_0: "--kv-cache-q4-0",
-        KVCacheQuantType.Q4_1: "--kv-cache-q4-1",
-        KVCacheQuantType.Q5_0: "--kv-cache-q5-0",
-        KVCacheQuantType.Q5_1: "--kv-cache-q5-1",
-        KVCacheQuantType.IQ4_NL: "--kv-cache-iq4-nl",
-        KVCacheQuantType.IQ3_S: "--kv-cache-iq3-s",
-        KVCacheQuantType.Q3_K: "--kv-cache-q3-k",
-        KVCacheQuantType.Q2_K: "--kv-cache-q2-k",
-        KVCacheQuantType.TURBOQUANT_4: "--kv-cache-iq4-nl",
-        KVCacheQuantType.TURBOQUANT_3: "--kv-cache-iq3-s",
-        KVCacheQuantType.TURBOQUANT_2: "--kv-cache-q2-k",
+        KVCacheQuantType.F16: "f16",
+        KVCacheQuantType.Q8_0: "q8_0",
+        KVCacheQuantType.Q4_0: "q4_0",
+        KVCacheQuantType.Q4_1: "q4_1",
+        KVCacheQuantType.Q5_0: "q5_0",
+        KVCacheQuantType.Q5_1: "q5_1",
+        KVCacheQuantType.IQ4_NL: "iq4_nl",
+        KVCacheQuantType.IQ3_S: "q4_0",
+        KVCacheQuantType.Q3_K: "q4_0",
+        KVCacheQuantType.Q2_K: "q4_0",
+        KVCacheQuantType.TURBOQUANT_4: "iq4_nl",
+        KVCacheQuantType.TURBOQUANT_3: "q4_0",
+        KVCacheQuantType.TURBOQUANT_2: "q4_0",
     }
     
-    if config.quant_type in quant_map and quant_map[config.quant_type]:
-        args.append(quant_map[config.quant_type])
+    if config.quant_type in quant_map:
+        cache_type = quant_map[config.quant_type]
+        args.extend(["-ctk", cache_type])
+        args.extend(["-ctv", cache_type])
     
-    if config.max_cache_size_mb > 0:
-        args.extend(["--cache-size-k", str(config.max_cache_size_mb * 1024)])
+    return args
     
     return args
 

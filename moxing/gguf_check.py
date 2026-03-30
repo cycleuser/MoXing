@@ -62,7 +62,7 @@ class GGUFParser:
         "phi3", "starcoder2", "mpt", "falcon", "baichuan", "chatglm", "internlm2",
         "deepseek", "deepseek2", "command-r", "dbrx", "granite", "gpt-2", "gpt-j",
         "gpt-neox", "grok-1", "jais", "llava", "minicpm", "opt", "orca", "persimmon",
-        "plamo", "refact", "solar", "t5", "vikhr", "lfm", "lfm2"
+        "plamo", "refact", "solar", "t5", "vikhr", "lfm", "lfm2", "glm4", "glm4moelite"
     }
     
     CRITICAL_KEYS = {

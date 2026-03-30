@@ -263,8 +263,10 @@ class LlamaServer:
         kv_cache_args = self._get_kv_cache_args()
         args.extend(kv_cache_args)
         
-        if self.cpu_offload and self.cpu_offload_layers > 0:
-            args.extend(["-ts", f"{self.n_gpu_layers - self.cpu_offload_layers},{self.cpu_offload_layers}"])
+        if self.cpu_offload and self.cpu_offload_layers > 0 and self.n_gpu_layers > 0:
+            gpu_layers = self.n_gpu_layers
+            if gpu_layers > 0:
+                args.extend(["-ts", f"{gpu_layers},{self.cpu_offload_layers}"])
             
         for key, value in self.extra_args.items():
             key = key.replace("_", "-")
@@ -279,6 +281,21 @@ class LlamaServer:
     def _get_kv_cache_args(self) -> List[str]:
         """Get KV cache optimization arguments."""
         args = []
+        
+        quant_map = {
+            "q8_0": "q8_0",
+            "q5_0": "q5_0",
+            "q4_0": "q4_0",
+            "q4_1": "q4_1",
+            "q5_1": "q5_1",
+            "iq4_nl": "iq4_nl",
+            "iq3_s": "q4_0",
+            "q3_k": "q4_0",
+            "q2_k": "q4_0",
+            "tq4": "iq4_nl",
+            "tq3": "q4_0",
+            "tq2": "q4_0",
+        }
         
         if self.kv_cache_quant == "auto":
             from moxing.kv_cache import recommend_cache_config, estimate_model_size_gb
@@ -297,20 +314,10 @@ class LlamaServer:
                 self._kv_cache_config = config
             except Exception:
                 pass
-        else:
-            quant_map = {
-                "q8_0": "--kv-cache-q8-0",
-                "q5_0": "--kv-cache-q5-0",
-                "q4_0": "--kv-cache-q4-0",
-                "q4_1": "--kv-cache-q4-1",
-                "q3_k": "--kv-cache-q3-k",
-                "q2_k": "--kv-cache-q2-k",
-                "iq4_nl": "--kv-cache-iq4-nl",
-                "iq3_s": "--kv-cache-iq3-s",
-            }
-            
-            if self.kv_cache_quant in quant_map:
-                args.append(quant_map[self.kv_cache_quant])
+        elif self.kv_cache_quant in quant_map:
+            cache_type = quant_map[self.kv_cache_quant]
+            args.extend(["-ctk", cache_type])
+            args.extend(["-ctv", cache_type])
         
         return args
     
@@ -334,6 +341,31 @@ class LlamaServer:
         console.print(f"[dim]GPU layers: {self.n_gpu_layers}[/dim]")
         console.print(f"[dim]Context: {self.ctx_size}[/dim]")
         
+        env = os.environ.copy()
+        
+        if self.gpu_backend == "rocm":
+            rocm_paths = [
+                "/opt/rocm/lib",
+                "/opt/rocm/core/lib",
+            ]
+            
+            import glob
+            rocm_core_paths = glob.glob("/opt/rocm/core-*/lib")
+            rocm_paths.extend(rocm_core_paths)
+            
+            for path in rocm_paths:
+                if Path(path).exists():
+                    if "LD_LIBRARY_PATH" in env:
+                        env["LD_LIBRARY_PATH"] = f"{path}:{env['LD_LIBRARY_PATH']}"
+                    else:
+                        env["LD_LIBRARY_PATH"] = path
+                    break
+            
+            if "HIP_VISIBLE_DEVICES" not in env:
+                env["HIP_VISIBLE_DEVICES"] = "0"
+        
+        env["LD_LIBRARY_PATH"] = f"{binary_path.parent}:{env.get('LD_LIBRARY_PATH', '')}"
+        
         try:
             self._process = subprocess.Popen(
                 args,
@@ -341,7 +373,8 @@ class LlamaServer:
                 stderr=subprocess.PIPE,
                 encoding='utf-8',
                 errors='replace',
-                cwd=str(binary_path.parent)
+                cwd=str(binary_path.parent),
+                env=env
             )
         except Exception as e:
             console.print(f"[red]Failed to start process: {e}[/red]")
