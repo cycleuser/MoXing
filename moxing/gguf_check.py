@@ -62,7 +62,11 @@ class GGUFParser:
         "phi3", "starcoder2", "mpt", "falcon", "baichuan", "chatglm", "internlm2",
         "deepseek", "deepseek2", "command-r", "dbrx", "granite", "gpt-2", "gpt-j",
         "gpt-neox", "grok-1", "jais", "llava", "minicpm", "opt", "orca", "persimmon",
-        "plamo", "refact", "solar", "t5", "vikhr", "lfm", "lfm2", "glm4", "glm4moelite"
+        "plamo", "refact", "solar", "t5", "vikhr", "lfm", "lfm2", "glm4"
+    }
+    
+    OLLAMA_ONLY_ARCHITECTURES = {
+        "glm4moelite", "glm4moe", "bitnet"
     }
     
     CRITICAL_KEYS = {
@@ -305,3 +309,19 @@ def get_model_suggestions(path: Path) -> List[str]:
         suggestions.append("File may not be a valid GGUF file")
     
     return suggestions
+
+
+def requires_ollama_backend(path: Path) -> Tuple[bool, str]:
+    """
+    Check if a model requires Ollama's patched backend.
+    
+    Returns:
+        Tuple of (requires_ollama, architecture)
+    """
+    try:
+        meta = diagnose_gguf(path)
+        if meta.architecture in GGUFParser.OLLAMA_ONLY_ARCHITECTURES:
+            return True, meta.architecture
+        return False, meta.architecture
+    except Exception:
+        return False, "unknown"
