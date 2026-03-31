@@ -17,20 +17,13 @@ import psutil
 
 import httpx
 from rich.console import Console
+from rich.prompt import Confirm
 
 console = Console()
 
 
 def find_available_port(start_port: int = 8080, max_attempts: int = 100) -> int:
-    """Find an available port starting from start_port.
-    
-    Args:
-        start_port: Port to start searching from
-        max_attempts: Maximum number of ports to try
-    
-    Returns:
-        Available port number
-    """
+    """Find an available port starting from start_port."""
     for port in range(start_port, start_port + max_attempts):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -69,6 +62,7 @@ class ServerConfig:
     port: int = 8080
     ctx_size: int = 4096
     n_gpu_layers: int = -1
+    n_cpu_layers: int = 0
     n_threads: int = -1
     batch_size: int = 512
     flash_attn: bool = True
@@ -82,11 +76,7 @@ class ServerConfig:
 
 
 def _find_binary(backend: str = "auto") -> Path:
-    """Find llama-server binary using BinaryManager.
-    
-    Args:
-        backend: Backend type (auto, vulkan, cuda, rocm, metal, cpu)
-    """
+    """Find llama-server binary using BinaryManager."""
     from moxing.binaries import get_binary_manager
     
     manager = get_binary_manager(backend)
@@ -98,18 +88,7 @@ def _find_binary(backend: str = "auto") -> Path:
 
 
 class LlamaServer:
-    """
-    Manage llama.cpp server instance.
-    
-    Usage:
-        server = LlamaServer(model="model.gguf")
-        server.start()
-        
-        # Or use as context manager
-        with LlamaServer(model="model.gguf") as s:
-            # Server is running
-            response = s.chat("Hello!")
-    """
+    """Manage llama.cpp server instance."""
     
     def __init__(
         self,
@@ -118,12 +97,14 @@ class LlamaServer:
         port: int = 8080,
         ctx_size: int = 0,
         n_gpu_layers: int = -1,
+        n_cpu_layers: int = 0,
         device: str = "auto",
         gpu_backend: str = "auto",
         auto_ctx: bool = True,
         kv_cache_quant: str = "auto",
         cpu_offload: bool = False,
         cpu_offload_layers: int = 0,
+        prompt_offload: bool = False,
         **kwargs
     ):
         model_path = Path(model)
@@ -141,12 +122,14 @@ class LlamaServer:
         self.port = port
         self._requested_ctx_size = ctx_size
         self.n_gpu_layers = n_gpu_layers
+        self.n_cpu_layers = n_cpu_layers
         self.device = device
         self.gpu_backend = gpu_backend
         self.auto_ctx = auto_ctx
         self.kv_cache_quant = kv_cache_quant
         self.cpu_offload = cpu_offload
         self.cpu_offload_layers = cpu_offload_layers
+        self.prompt_offload = prompt_offload
         self.extra_args = kwargs
         
         self.ctx_size = ctx_size if ctx_size > 0 else 4096
@@ -157,6 +140,7 @@ class LlamaServer:
         self._process: Optional[subprocess.Popen] = None
         self._server_thread: Optional[threading.Thread] = None
         self._base_url = f"http://{host}:{port}"
+        self._offload_plan = None
     
     def _auto_detect_context(self):
         """Auto-detect optimal context size based on available VRAM."""
@@ -168,7 +152,7 @@ class LlamaServer:
             
             model_size_gb = estimate_model_size_gb(str(self.model))
             
-            gpu_devices = [d for d in devices if d.backend.value != "cpu"]
+            gpu_devices = [d for d in devices if d.backend.is_gpu()]
             if not gpu_devices:
                 self.ctx_size = 4096
                 return
@@ -179,29 +163,41 @@ class LlamaServer:
             if available_vram_gb <= 0:
                 available_vram_gb = best_device.memory_gb * 0.8
             
-            ctx_size, n_gpu_layers, notes = calculate_optimal_context(
+            offload_plan = detector.calculate_offload_plan(best_device, model_size_gb)
+            self._offload_plan = offload_plan
+            
+            if offload_plan.needs_offload and self.n_gpu_layers == -1:
+                if self.cpu_offload_layers > 0:
+                    pass
+                elif self.prompt_offload or self.cpu_offload:
+                    console.print(f"\n[yellow]Warning: Model ({model_size_gb:.1f}GB) may not fit in GPU VRAM ({available_vram_gb:.1f}GB)[/yellow]")
+                    console.print(f"[yellow]Suggested CPU offload: {offload_plan.suggested_cpu_layers} layers[/yellow]")
+                    
+                    if sys.stdin.isatty():
+                        try:
+                            if Confirm.ask(f"Enable CPU offload for {offload_plan.suggested_cpu_layers} layers?", default=True):
+                                self.cpu_offload_layers = offload_plan.suggested_cpu_layers
+                                self.n_gpu_layers = offload_plan.gpu_layers
+                        except:
+                            pass
+            
+            ctx_size, n_gpu_layers, n_cpu_layers, notes = calculate_optimal_context(
                 model_size_gb=model_size_gb,
                 available_vram_gb=available_vram_gb,
                 ctx_size_requested=0,
             )
             
             self.ctx_size = ctx_size
-            if n_gpu_layers != -1:
-                self.n_gpu_layers = n_gpu_layers
             
             console.print(f"[dim]Auto-detected context size: {ctx_size} ({notes})[/dim]")
             
         except Exception as e:
             console.print(f"[yellow]Could not auto-detect context: {e}[/yellow]")
             self.ctx_size = 4096
-        
+    
     @staticmethod
     def get_binary_path(backend: str = "auto") -> Path:
-        """Get the path to the llama-server binary for current platform.
-        
-        Args:
-            backend: Backend type (auto, vulkan, cuda, rocm, metal, cpu)
-        """
+        """Get the path to the llama-server binary for current platform."""
         return _find_binary(backend)
     
     def _get_binary_for_backend(self) -> Path:
@@ -251,23 +247,28 @@ class LlamaServer:
             "--host", self.host,
             "--port", str(self.port),
             "-c", str(self.ctx_size),
-            "-ngl", str(self.n_gpu_layers) if self.n_gpu_layers >= 0 else "all",
         ]
+        
+        if self.cpu_offload_layers > 0 and self.n_gpu_layers != 0:
+            if self.n_gpu_layers > 0:
+                gpu_layers = self.n_gpu_layers
+            else:
+                gpu_layers = 99
+            args.extend(["-ngl", str(gpu_layers)])
+            args.extend(["-ts", f"{gpu_layers},{self.cpu_offload_layers}"])
+        else:
+            ngl_value = str(self.n_gpu_layers) if self.n_gpu_layers >= 0 else "all"
+            args.extend(["-ngl", ngl_value])
         
         if self.device != "auto" and self.device != "CPU" and self.n_gpu_layers != 0:
             args.extend(["-dev", self.device])
-            
-        if self.gpu_backend != "auto":
+        
+        if self.gpu_backend not in ["auto", "cpu"]:
             os.environ["GGML_BACKEND"] = self.gpu_backend
         
         kv_cache_args = self._get_kv_cache_args()
         args.extend(kv_cache_args)
         
-        if self.cpu_offload and self.cpu_offload_layers > 0 and self.n_gpu_layers > 0:
-            gpu_layers = self.n_gpu_layers
-            if gpu_layers > 0:
-                args.extend(["-ts", f"{gpu_layers},{self.cpu_offload_layers}"])
-            
         for key, value in self.extra_args.items():
             key = key.replace("_", "-")
             if isinstance(value, bool):
@@ -275,7 +276,7 @@ class LlamaServer:
                     args.append(f"--{key}")
             else:
                 args.extend([f"--{key}", str(value)])
-                
+        
         return args
     
     def _get_kv_cache_args(self) -> List[str]:
@@ -338,10 +339,27 @@ class LlamaServer:
         console.print(f"[dim]Working dir: {binary_path.parent}[/dim]")
         console.print(f"[dim]Model: {self.model}[/dim]")
         console.print(f"[dim]Backend: {self.gpu_backend}[/dim]")
-        console.print(f"[dim]GPU layers: {self.n_gpu_layers}[/dim]")
+        
+        if self.cpu_offload_layers > 0:
+            console.print(f"[dim]GPU layers: {self.n_gpu_layers if self.n_gpu_layers > 0 else 'all'}, CPU offload: {self.cpu_offload_layers}[/dim]")
+        else:
+            gpu_layers_str = str(self.n_gpu_layers) if self.n_gpu_layers >= 0 else "all"
+            console.print(f"[dim]GPU layers: {gpu_layers_str}[/dim]")
+        
         console.print(f"[dim]Context: {self.ctx_size}[/dim]")
         
         env = os.environ.copy()
+        
+        from moxing.device import DeviceDetector, BackendType
+        detector = DeviceDetector()
+        
+        try:
+            backend_type = BackendType(self.gpu_backend) if self.gpu_backend != "auto" else BackendType.CPU
+            device_obj = detector.get_device_by_name(self.device) if self.device != "auto" else None
+            backend_env = detector.get_backend_env(backend_type, device_obj)
+            env.update(backend_env)
+        except Exception:
+            pass
         
         if self.gpu_backend == "rocm":
             rocm_paths = [

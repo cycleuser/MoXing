@@ -22,17 +22,31 @@ class BackendType(Enum):
     VULKAN = "vulkan"
     ROCM = "rocm"
     METAL = "metal"
+    MLX = "mlx"
+    MPS = "mps"
     CPU = "cpu"
     
     def __lt__(self, other):
         order = {
             BackendType.CUDA: 0,
             BackendType.METAL: 1,
-            BackendType.ROCM: 2,
-            BackendType.VULKAN: 3,
-            BackendType.CPU: 4,
+            BackendType.MPS: 2,
+            BackendType.MLX: 3,
+            BackendType.ROCM: 4,
+            BackendType.VULKAN: 5,
+            BackendType.CPU: 6,
         }
         return order[self] < order[other]
+    
+    @classmethod
+    def all_gpu(cls) -> List['BackendType']:
+        return [cls.CUDA, cls.ROCM, cls.VULKAN, cls.METAL, cls.MLX, cls.MPS]
+    
+    def is_gpu(self) -> bool:
+        return self in self.all_gpu()
+    
+    def requires_offload_support(self) -> bool:
+        return self in [BackendType.CUDA, BackendType.ROCM, BackendType.VULKAN, BackendType.METAL]
 
 
 @dataclass
@@ -43,6 +57,7 @@ class Device:
     memory_mb: int = 0
     free_memory_mb: int = 0
     vendor: str = ""
+    total_layers: int = 0
     
     @property
     def memory_gb(self) -> float:
@@ -51,6 +66,10 @@ class Device:
     @property
     def free_memory_gb(self) -> float:
         return self.free_memory_mb / 1024
+    
+    @property
+    def used_memory_gb(self) -> float:
+        return (self.memory_mb - self.free_memory_mb) / 1024
     
     def __str__(self) -> str:
         mem_str = f"{self.memory_gb:.1f}GB" if self.memory_mb > 0 else "unknown"
@@ -62,8 +81,29 @@ class DeviceConfig:
     backend: BackendType
     device: Device
     n_gpu_layers: int = -1
+    n_cpu_layers: int = 0
     recommended_ctx: int = 4096
     notes: str = ""
+    needs_offload: bool = False
+    offload_suggested: int = 0
+    
+    @property
+    def total_layers(self) -> int:
+        if self.n_gpu_layers < 0:
+            return -1
+        return self.n_gpu_layers + self.n_cpu_layers
+
+
+@dataclass
+class OffloadPlan:
+    can_fit_full: bool
+    gpu_layers: int
+    cpu_layers: int
+    vram_required_gb: float
+    vram_available_gb: float
+    model_size_gb: float
+    needs_offload: bool
+    suggested_cpu_layers: int
 
 
 class DeviceDetector:
@@ -169,29 +209,39 @@ class DeviceDetector:
             
             if result.returncode == 0:
                 lines = result.stdout.split("\n")
-                current_gpu = None
+                
+                gpu_names = {}
+                gpu_vram = {}
+                
                 for line in lines:
                     line = line.strip()
-                    if line.startswith("GPU"):
-                        match = re.match(r"GPU\[(\d+)\]", line)
+                    
+                    if "Device Name:" in line:
+                        match = re.match(r"GPU\[(\d+)\].*Device Name:\s*(.+)", line)
                         if match:
-                            current_gpu = int(match.group(1))
-                    elif current_gpu is not None and "VRAM Total Memory" in line:
-                        match = re.search(r"(\d+)\s*(MB|GB)", line)
+                            gpu_id = int(match.group(1))
+                            name = match.group(2).strip()
+                            gpu_names[gpu_id] = name
+                    
+                    if "VRAM Total Memory (B):" in line:
+                        match = re.match(r"GPU\[(\d+)\].*VRAM Total Memory \(B\):\s*(\d+)", line)
                         if match:
-                            mem = int(match.group(1))
-                            if match.group(2) == "GB":
-                                mem *= 1024
-                            devices.append(Device(
-                                index=current_gpu,
-                                name="AMD GPU",
-                                backend=BackendType.ROCM,
-                                memory_mb=mem,
-                                free_memory_mb=mem,
-                                vendor="amd"
-                            ))
-                            current_gpu = None
-        except Exception:
+                            gpu_id = int(match.group(1))
+                            vram_bytes = int(match.group(2))
+                            gpu_vram[gpu_id] = int(vram_bytes / (1024 * 1024))
+                
+                for gpu_id in sorted(set(gpu_names.keys()) | set(gpu_vram.keys())):
+                    name = gpu_names.get(gpu_id, "AMD GPU")
+                    vram_mb = gpu_vram.get(gpu_id, 0)
+                    devices.append(Device(
+                        index=gpu_id,
+                        name=name,
+                        backend=BackendType.ROCM,
+                        memory_mb=vram_mb,
+                        free_memory_mb=vram_mb,
+                        vendor="amd"
+                    ))
+        except Exception as e:
             pass
         return devices
     
@@ -204,38 +254,44 @@ class DeviceDetector:
         if not drm_path.exists():
             return devices
         
-        for card in sorted(drm_path.glob("card*"), key=lambda x: int(x.name.replace("card", ""))):
+        for card in drm_path.glob("card[0-9]*"):
             try:
+                match = re.match(r'card(\d+)', card.name)
+                if not match:
+                    continue
+                idx = int(match.group(1))
+                
                 uevent_path = card / "device/uevent"
-                if uevent_path.exists():
-                    content = uevent_path.read_text()
-                    
-                    if "amdgpu" not in content.lower() and "AMD" not in content:
-                        continue
-                    
-                    vendor_match = re.search(r"PCI_ID=([0-9a-fA-F]+):([0-9a-fA-F]+)", content)
-                    if vendor_match and vendor_match.group(1) != "1002":
-                        continue
-                    
-                    idx = int(card.name.replace("card", ""))
-                    
-                    name = "AMD GPU"
-                    name_path = card / "device/driver/module/drivers"
-                    if name_path.exists():
-                        for d in name_path.iterdir():
-                            if "amdgpu" in d.name:
-                                name = "AMD Radeon"
-                                break
-                    
-                    vram_mb = 0
-                    vram_path = card / "device/mem_info_vram_total"
-                    if vram_path.exists():
-                        try:
-                            vram = int(vram_path.read_text().strip())
-                            vram_mb = int(vram / (1024 * 1024))
-                        except Exception:
-                            pass
-                    
+                if not uevent_path.exists():
+                    continue
+                
+                content = uevent_path.read_text()
+                
+                if "amdgpu" not in content.lower() and "AMD" not in content:
+                    continue
+                
+                vendor_match = re.search(r"PCI_ID=([0-9a-fA-F]+):([0-9a-fA-F]+)", content)
+                if vendor_match and vendor_match.group(1) != "1002":
+                    continue
+                
+                name = "AMD GPU"
+                name_path = card / "device/driver/module/drivers"
+                if name_path.exists():
+                    for d in name_path.iterdir():
+                        if "amdgpu" in d.name:
+                            name = "AMD Radeon"
+                            break
+                
+                vram_mb = 0
+                vram_path = card / "device/mem_info_vram_total"
+                if vram_path.exists():
+                    try:
+                        vram = int(vram_path.read_text().strip())
+                        vram_mb = int(vram / (1024 * 1024))
+                    except Exception:
+                        pass
+                
+                if vram_mb > 0:
                     devices.append(Device(
                         index=idx,
                         name=name,
@@ -264,7 +320,6 @@ class DeviceDetector:
         if not has_amd:
             self._amd_permission_ok = False
             self._amd_permission_message = amd_msg
-            console.print(f"[yellow]Warning: {amd_msg}[/yellow]")
         
         try:
             result = subprocess.run(
@@ -299,6 +354,10 @@ class DeviceDetector:
                             backend = BackendType.ROCM
                         elif backend_str == "metal" or backend_str == "mtl":
                             backend = BackendType.METAL
+                        elif backend_str == "mlx":
+                            backend = BackendType.MLX
+                        elif backend_str == "mps":
+                            backend = BackendType.MPS
                         elif backend_str == "vulkan":
                             backend = BackendType.VULKAN
                         
@@ -313,15 +372,13 @@ class DeviceDetector:
                             vendor=vendor
                         ))
         except Exception as e:
-            console.print(f"[yellow]Warning: Device detection via llama.cpp failed: {e}[/yellow]")
+            pass
         
         amd_detected = any(d.backend == BackendType.ROCM for d in self._devices)
         if not amd_detected and self._amd_permission_ok:
-            console.print("[dim]Trying alternative AMD GPU detection methods...[/dim]")
-            
             for detect_func in [
-                self._detect_amd_via_amdsmi,
                 self._detect_amd_via_rocmsmi,
+                self._detect_amd_via_amdsmi,
                 self._detect_via_sysfs
             ]:
                 try:
@@ -331,7 +388,6 @@ class DeviceDetector:
                             exists = any(d.index == dev.index and d.backend == BackendType.ROCM for d in self._devices)
                             if not exists:
                                 self._devices.append(dev)
-                        console.print(f"[green]Found {len(amd_devices)} AMD GPU(s) via alternative detection[/green]")
                         break
                 except Exception:
                     continue
@@ -369,6 +425,34 @@ class DeviceDetector:
             except Exception:
                 pass
         
+        if sys.platform == "darwin":
+            if not any(d.backend == BackendType.METAL for d in self._devices):
+                try:
+                    result = subprocess.run(
+                        ["system_profiler", "SPDisplaysDataType"],
+                        capture_output=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        timeout=10
+                    )
+                    if result.returncode == 0:
+                        for line in result.stdout.split("\n"):
+                            if "Chipset Model:" in line or "Model:" in line:
+                                name = line.split(":")[-1].strip()
+                                if "Apple" in name or "M1" in name or "M2" in name or "M3" in name or "M4" in name:
+                                    unified_memory_gb = self._get_macos_unified_memory()
+                                    self._devices.append(Device(
+                                        index=0,
+                                        name=name,
+                                        backend=BackendType.METAL,
+                                        memory_mb=int(unified_memory_gb * 1024),
+                                        free_memory_mb=int(unified_memory_gb * 1024 * 0.8),
+                                        vendor="apple"
+                                    ))
+                                    break
+                except Exception:
+                    pass
+        
         vulkan_detected = any(d.backend == BackendType.VULKAN for d in self._devices)
         if not vulkan_detected:
             try:
@@ -388,15 +472,13 @@ class DeviceDetector:
                             match = re.search(r"(?:deviceName|Name)\s*[=:]\s*(.+)", line)
                             if match:
                                 name = match.group(1).strip()
+                                
+                                if "llvmpipe" in name.lower() or "swiftshader" in name.lower() or "software" in name.lower():
+                                    continue
+                                
                                 vendor = self._detect_vendor(name)
                                 
-                                backend = BackendType.VULKAN
-                                if vendor == "amd":
-                                    backend = BackendType.ROCM
-                                elif vendor == "nvidia":
-                                    backend = BackendType.CUDA
-                                
-                                exists = any(d.name == name and d.backend == backend for d in self._devices)
+                                exists = any(d.name == name for d in self._devices)
                                 if not exists:
                                     self._devices.append(Device(
                                         index=device_id,
@@ -423,38 +505,97 @@ class DeviceDetector:
         
         return self._devices
     
+    def _get_macos_unified_memory(self) -> float:
+        """Get unified memory size on macOS."""
+        try:
+            result = subprocess.run(
+                ["sysctl", "-n", "hw.memsize"],
+                capture_output=True,
+                encoding='utf-8',
+                timeout=5
+            )
+            if result.returncode == 0:
+                bytes_mem = int(result.stdout.strip())
+                return bytes_mem / (1024 ** 3)
+        except Exception:
+            pass
+        return 16.0
+    
     def _reassign_device_indices(self):
         unique_devices: List[Device] = []
-        seen_names: Dict[str, int] = {}
+        seen_keys: Dict[str, Device] = {}
         
         gpu_devices = [d for d in self._devices if d.backend != BackendType.CPU]
         cpu_devices = [d for d in self._devices if d.backend == BackendType.CPU]
         
-        backend_order = [BackendType.CUDA, BackendType.ROCM, BackendType.METAL, BackendType.VULKAN]
+        software_renderers = ["llvmpipe", "swiftshader", "software", "mesa software"]
         
-        for backend in backend_order:
-            backend_devices = [d for d in gpu_devices if d.backend == backend]
-            backend_devices.sort(key=lambda x: x.memory_mb, reverse=True)
+        for dev in gpu_devices:
+            if any(sr in dev.name.lower() for sr in software_renderers):
+                continue
             
-            for dev in backend_devices:
-                name_key = f"{dev.name}_{dev.backend.value}"
-                if name_key not in seen_names:
-                    seen_names[name_key] = len(unique_devices)
-                    unique_devices.append(dev)
+            name_lower = dev.name.lower()
+            
+            key = None
+            if "7900" in name_lower or "7900xtx" in name_lower.replace(" ", ""):
+                key = "7900xtx"
+            elif "610m" in name_lower:
+                key = "610m"
+            elif "4070" in name_lower and "laptop" in name_lower:
+                key = "rtx4070_laptop"
+            elif "4070" in name_lower:
+                key = "rtx4070"
+            elif "4080" in name_lower:
+                key = "rtx4080"
+            elif "4090" in name_lower:
+                key = "rtx4090"
+            elif "radeon" in name_lower and ("rx" in name_lower or "7" in name_lower):
+                if "7900" in name_lower:
+                    key = "7900xtx"
+                elif "610" in name_lower:
+                    key = "610m"
+                else:
+                    match = re.search(r'rx\s*(\d+)', name_lower)
+                    if match:
+                        key = f"rx{match.group(1)}"
+                    else:
+                        key = dev.name.replace(" ", "_").lower()[:30]
+            else:
+                key = dev.name.replace(" ", "_").lower()[:30]
+            
+            if key in seen_keys:
+                existing = seen_keys[key]
+                
+                if dev.memory_mb > 0 and existing.memory_mb == 0:
+                    existing.memory_mb = dev.memory_mb
+                    existing.free_memory_mb = dev.free_memory_mb
+                
+                if dev.backend == BackendType.ROCM:
+                    existing.backend = BackendType.ROCM
+                    if dev.memory_mb > 0:
+                        existing.name = dev.name
+                
+                if dev.backend == BackendType.CUDA and existing.backend != BackendType.CUDA:
+                    existing.backend = BackendType.CUDA
+            else:
+                seen_keys[key] = dev
         
-        other_devices = [d for d in gpu_devices if d.backend not in backend_order]
-        other_devices.sort(key=lambda x: x.memory_mb, reverse=True)
-        for dev in other_devices:
-            name_key = f"{dev.name}_{dev.backend.value}"
-            if name_key not in seen_names:
-                seen_names[name_key] = len(unique_devices)
-                unique_devices.append(dev)
+        rocm_devices = [d for d in seen_keys.values() if d.backend == BackendType.ROCM and d.memory_mb > 0]
+        cuda_devices = [d for d in seen_keys.values() if d.backend == BackendType.CUDA]
+        metal_devices = [d for d in seen_keys.values() if d.backend in [BackendType.METAL, BackendType.MLX, BackendType.MPS]]
+        vulkan_devices = [d for d in seen_keys.values() if d.backend == BackendType.VULKAN]
+        other_devices = [d for d in seen_keys.values() if d.backend not in [BackendType.CUDA, BackendType.ROCM, BackendType.METAL, BackendType.MLX, BackendType.MPS, BackendType.VULKAN]]
+        
+        for devices in [cuda_devices, rocm_devices, metal_devices, vulkan_devices, other_devices]:
+            devices.sort(key=lambda x: x.memory_mb, reverse=True)
+        
+        unique_devices = cuda_devices + rocm_devices + metal_devices + vulkan_devices + other_devices
         
         for i, dev in enumerate(unique_devices):
             dev.index = i
         
         if cpu_devices:
-            cpu_devices[0].index = 0
+            cpu_devices[0].index = len(unique_devices)
         
         self._devices = unique_devices + cpu_devices[:1]
     
@@ -467,9 +608,85 @@ class DeviceDetector:
             return "amd"
         elif "intel" in name_lower or "arc" in name_lower:
             return "intel"
-        elif "apple" in name_lower or "m1" in name_lower or "m2" in name_lower or "m3" in name_lower:
+        elif "apple" in name_lower or "m1" in name_lower or "m2" in name_lower or "m3" in name_lower or "m4" in name_lower:
             return "apple"
         return "unknown"
+    
+    def calculate_offload_plan(
+        self,
+        device: Device,
+        model_size_gb: float,
+        ctx_size: int = 4096,
+        total_layers: int = 80,
+    ) -> OffloadPlan:
+        """Calculate GPU/CPU offload plan.
+        
+        Args:
+            device: Target device
+            model_size_gb: Model size in GB
+            ctx_size: Context size
+            total_layers: Total number of layers (default 80)
+        
+        Returns:
+            OffloadPlan with recommended configuration
+        """
+        if device.backend == BackendType.CPU:
+            return OffloadPlan(
+                can_fit_full=False,
+                gpu_layers=0,
+                cpu_layers=total_layers,
+                vram_required_gb=0,
+                vram_available_gb=0,
+                model_size_gb=model_size_gb,
+                needs_offload=True,
+                suggested_cpu_layers=total_layers
+            )
+        
+        available_vram_gb = device.free_memory_gb * 0.85
+        
+        kv_cache_gb = ctx_size * 0.000002
+        
+        vram_required_full = model_size_gb * 1.1 + kv_cache_gb
+        
+        if available_vram_gb >= vram_required_full:
+            return OffloadPlan(
+                can_fit_full=True,
+                gpu_layers=-1,
+                cpu_layers=0,
+                vram_required_gb=vram_required_full,
+                vram_available_gb=available_vram_gb,
+                model_size_gb=model_size_gb,
+                needs_offload=False,
+                suggested_cpu_layers=0
+            )
+        
+        layer_size_gb = model_size_gb / total_layers * 1.1
+        max_gpu_layers = int(available_vram_gb / layer_size_gb)
+        
+        if max_gpu_layers >= total_layers:
+            return OffloadPlan(
+                can_fit_full=True,
+                gpu_layers=-1,
+                cpu_layers=0,
+                vram_required_gb=vram_required_full,
+                vram_available_gb=available_vram_gb,
+                model_size_gb=model_size_gb,
+                needs_offload=False,
+                suggested_cpu_layers=0
+            )
+        
+        cpu_layers_needed = total_layers - max_gpu_layers
+        
+        return OffloadPlan(
+            can_fit_full=False,
+            gpu_layers=max_gpu_layers,
+            cpu_layers=cpu_layers_needed,
+            vram_required_gb=available_vram_gb,
+            vram_available_gb=device.free_memory_gb,
+            model_size_gb=model_size_gb,
+            needs_offload=True,
+            suggested_cpu_layers=cpu_layers_needed
+        )
     
     def get_best_device(self, model_size_gb: float = 0) -> DeviceConfig:
         """Get the best device configuration for the given model size."""
@@ -495,18 +712,22 @@ class DeviceDetector:
                 backend=BackendType.CPU,
                 device=Device(index=0, name="CPU", backend=BackendType.CPU),
                 n_gpu_layers=0,
+                n_cpu_layers=80,
                 recommended_ctx=4096,
                 notes="No GPU available, using CPU"
             )
         
-        n_gpu_layers, ctx, notes = self._calculate_config(best_device, model_size_gb)
+        offload_plan = self.calculate_offload_plan(best_device, model_size_gb)
         
         return DeviceConfig(
             backend=best_backend,
             device=best_device,
-            n_gpu_layers=n_gpu_layers,
-            recommended_ctx=ctx,
-            notes=notes
+            n_gpu_layers=offload_plan.gpu_layers,
+            n_cpu_layers=offload_plan.cpu_layers,
+            recommended_ctx=self._calculate_ctx(best_device, model_size_gb, offload_plan),
+            notes=self._build_notes(best_device, offload_plan),
+            needs_offload=offload_plan.needs_offload,
+            offload_suggested=offload_plan.suggested_cpu_layers
         )
     
     def _score_device(self, device: Device, model_size_gb: float) -> int:
@@ -515,7 +736,9 @@ class DeviceDetector:
         
         backend_scores = {
             BackendType.CUDA: 100,
-            BackendType.METAL: 90,
+            BackendType.METAL: 95,
+            BackendType.MPS: 95,
+            BackendType.MLX: 90,
             BackendType.ROCM: 85,
             BackendType.VULKAN: 70,
             BackendType.CPU: 0,
@@ -525,7 +748,7 @@ class DeviceDetector:
         if device.free_memory_mb > 0:
             free_gb = device.free_memory_gb
             if model_size_gb > 0:
-                if free_gb >= model_size_gb * 1.2:
+                if free_gb >= model_size_gb * 1.3:
                     score += 50
                 elif free_gb >= model_size_gb:
                     score += 30
@@ -540,42 +763,35 @@ class DeviceDetector:
         
         return score
     
-    def _calculate_config(self, device: Device, model_size_gb: float) -> Tuple[int, int, str]:
-        """Calculate optimal GPU layers and context size."""
-        notes = []
-        
-        if device.free_memory_gb <= 0:
-            return -1, 4096, "Unknown GPU memory, using all layers"
-        
-        available_gb = device.free_memory_gb * 0.85
-        
-        if model_size_gb <= 0:
-            return -1, 4096, f"Using all GPU layers (model size unknown)"
-        
-        if available_gb >= model_size_gb * 1.3:
-            ctx = min(8192, int((available_gb - model_size_gb) * 1024))
-            notes.append(f"Full GPU offload possible")
-        elif available_gb >= model_size_gb:
-            ctx = 4096
-            notes.append(f"GPU offload with limited context")
+    def _calculate_ctx(self, device: Device, model_size_gb: float, offload_plan: OffloadPlan) -> int:
+        """Calculate optimal context size."""
+        if offload_plan.can_fit_full:
+            available_gb = device.free_memory_gb * 0.85 - model_size_gb
+            if available_gb >= 4:
+                return 16384
+            elif available_gb >= 2:
+                return 8192
+            else:
+                return 4096
         else:
-            ratio = available_gb / model_size_gb
-            notes.append(f"Partial GPU offload (~{int(ratio*100)}%)")
-            ctx = 2048
-        
+            return 4096
+    
+    def _build_notes(self, device: Device, offload_plan: OffloadPlan) -> str:
+        """Build notes string for device config."""
+        notes = []
         notes.append(f"GPU: {device.name}")
         
-        return -1, ctx, "; ".join(notes)
+        if offload_plan.can_fit_full:
+            notes.append("Full GPU offload")
+        else:
+            notes.append(f"GPU layers: {offload_plan.gpu_layers}")
+            notes.append(f"CPU layers: {offload_plan.cpu_layers}")
+            notes.append(f"VRAM: {offload_plan.vram_available_gb:.1f}GB available")
+        
+        return "; ".join(notes)
     
     def get_device_by_name(self, device_name: str) -> Optional[Device]:
-        """Get device by name like 'gpu0', 'gpu1', 'cpu'.
-        
-        Args:
-            device_name: Device name (e.g., 'gpu0', 'gpu1', 'cpu', 'vulkan0', 'cuda0')
-        
-        Returns:
-            Device or None if not found
-        """
+        """Get device by name like 'gpu0', 'gpu1', 'cpu'."""
         if not self._devices:
             self.detect()
         
@@ -596,7 +812,7 @@ class DeviceDetector:
             except ValueError:
                 pass
         
-        for backend in ["vulkan", "cuda", "rocm", "metal"]:
+        for backend in ["vulkan", "cuda", "rocm", "metal", "mlx", "mps"]:
             if device_name.startswith(backend):
                 try:
                     idx = int(device_name[len(backend):])
@@ -616,18 +832,10 @@ class DeviceDetector:
         self, 
         device_name: str, 
         backend_name: Optional[str] = None,
-        model_size_gb: float = 0
+        model_size_gb: float = 0,
+        cpu_offload_layers: int = 0,
     ) -> DeviceConfig:
-        """Get device config by device name and optional backend.
-        
-        Args:
-            device_name: Device name (e.g., 'gpu0', 'gpu1', 'cpu')
-            backend_name: Backend name (e.g., 'vulkan', 'cuda', 'auto')
-            model_size_gb: Model size for context calculation
-        
-        Returns:
-            DeviceConfig
-        """
+        """Get device config by device name and optional backend."""
         device = self.get_device_by_name(device_name)
         
         if device is None:
@@ -648,18 +856,30 @@ class DeviceDetector:
                 backend=BackendType.CPU,
                 device=device,
                 n_gpu_layers=0,
+                n_cpu_layers=80,
                 recommended_ctx=4096,
                 notes="Using CPU only"
             )
         
-        n_gpu_layers, ctx, notes = self._calculate_config(device, model_size_gb)
+        offload_plan = self.calculate_offload_plan(device, model_size_gb)
+        
+        if cpu_offload_layers > 0:
+            if offload_plan.gpu_layers > 0:
+                gpu_layers = max(1, offload_plan.gpu_layers - cpu_offload_layers)
+            else:
+                gpu_layers = -1
+        else:
+            gpu_layers = offload_plan.gpu_layers
         
         return DeviceConfig(
             backend=backend,
             device=device,
-            n_gpu_layers=n_gpu_layers,
-            recommended_ctx=ctx,
-            notes=notes
+            n_gpu_layers=gpu_layers,
+            n_cpu_layers=cpu_offload_layers if cpu_offload_layers > 0 else offload_plan.cpu_layers,
+            recommended_ctx=self._calculate_ctx(device, model_size_gb, offload_plan),
+            notes=self._build_notes(device, offload_plan),
+            needs_offload=offload_plan.needs_offload,
+            offload_suggested=offload_plan.suggested_cpu_layers
         )
     
     def list_devices(self) -> None:
@@ -667,27 +887,42 @@ class DeviceDetector:
         if not self._devices:
             self.detect()
         
-        table = Table(title="Available Devices (use -d option to select)")
-        table.add_column("Device ID", style="cyan", width=10)
-        table.add_column("Name", style="green")
-        table.add_column("Backend", style="magenta")
-        table.add_column("Memory", style="yellow")
-        table.add_column("Free", style="blue")
-        table.add_column("Vendor", style="white")
+        table = Table(title="Available Devices")
+        table.add_column("ID", style="cyan", width=6)
+        table.add_column("Name", style="green", width=32)
+        table.add_column("Backend", style="magenta", width=8)
+        table.add_column("Memory", style="yellow", width=10)
+        table.add_column("Free", style="blue", width=10)
+        table.add_column("Vendor", style="white", width=8)
         
         for device in self._devices:
-            mem = f"{device.memory_gb:.1f}GB" if device.memory_mb > 0 else "-"
-            free = f"{device.free_memory_gb:.1f}GB" if device.free_memory_mb > 0 else "-"
+            if device.memory_mb > 0:
+                if device.memory_gb >= 1:
+                    mem = f"{device.memory_gb:.1f}GB"
+                else:
+                    mem = f"{device.memory_mb}MB"
+            else:
+                mem = "-"
+            
+            if device.free_memory_mb > 0:
+                if device.free_memory_gb >= 1:
+                    free = f"{device.free_memory_gb:.1f}GB"
+                else:
+                    free = f"{device.free_memory_mb}MB"
+            else:
+                free = "-"
             
             if device.backend == BackendType.CPU:
                 device_id = "cpu"
             else:
                 device_id = f"gpu{device.index}"
             
+            backend_display = device.backend.value.upper()
+            
             table.add_row(
                 device_id,
-                device.name,
-                device.backend.value,
+                device.name[:32],
+                backend_display,
                 mem,
                 free,
                 device.vendor
@@ -695,45 +930,67 @@ class DeviceDetector:
         
         console.print(table)
         
-        amd_devices = [d for d in self._devices if d.vendor == "amd" and d.backend != BackendType.CPU]
-        nvidia_devices = [d for d in self._devices if d.vendor == "nvidia" and d.backend != BackendType.CPU]
+        gpu_devices = [d for d in self._devices if d.backend != BackendType.CPU]
         
-        if amd_devices:
-            console.print()
-            if not self._amd_permission_ok:
-                console.print("[yellow bold]AMD GPU Permission Issue[/yellow bold]")
-                console.print(f"[yellow]{self._amd_permission_message}[/yellow]")
-                console.print()
-                console.print("[blue]Alternative: You can still use AMD GPU with Vulkan backend![/blue]")
-                for dev in amd_devices:
-                    console.print(f"[dim]  moxing serve model.gguf -d gpu{dev.index} -b vulkan[/dim]")
-            else:
-                console.print("\n[green]AMD GPUs detected! You can use them with:[/green]")
-                for dev in amd_devices:
-                    console.print(f"[dim]  moxing serve model.gguf -d gpu{dev.index} -b rocm[/dim]")
-                    console.print(f"[dim]  moxing serve model.gguf -d gpu{dev.index} -b vulkan[/dim]")
-        
-        if nvidia_devices:
-            console.print("\n[green]NVIDIA GPUs detected! You can use them with:[/green]")
-            for dev in nvidia_devices:
-                console.print(f"[dim]  moxing serve model.gguf -d gpu{dev.index} -b cuda[/dim]")
-                console.print(f"[dim]  moxing serve model.gguf -d gpu{dev.index} -b vulkan[/dim]")
-        
-        console.print("\n[dim]Usage: moxing serve model.gguf -d gpu0 -b cuda[/dim]")
-        console.print("[dim]        moxing serve model.gguf -d gpu1 -b vulkan[/dim]")
-        console.print("[dim]        moxing ollama serve model -d gpu0 -b cuda[/dim]")
+        if gpu_devices:
+            console.print("\n[bold]Backend Support:[/bold]")
+            
+            nvidia_devices = [d for d in gpu_devices if d.vendor == "nvidia"]
+            if nvidia_devices:
+                console.print(f"  [green]NVIDIA:[/green] CUDA, Vulkan")
+            
+            amd_devices = [d for d in gpu_devices if d.vendor == "amd"]
+            if amd_devices:
+                console.print(f"  [green]AMD:[/green] ROCm, Vulkan")
+            
+            console.print("\n[bold]Usage:[/bold]")
+            console.print("  [dim]moxing ollama serve model -d gpu0 -b cuda[/dim]")
+            console.print("  [dim]moxing ollama serve model -d gpu1 -b rocm[/dim]")
+            console.print("  [dim]moxing ollama serve model -d gpu0 -b vulkan[/dim]")
+            
+            console.print("\n[bold]CPU Offload Options:[/bold]")
+            console.print("  [dim]moxing ollama serve model --cpu-offload 10[/dim]")
+            console.print("  [dim]moxing ollama serve model --prompt-offload[/dim]")
     
-    def get_backend_env(self, backend: BackendType) -> dict:
+    def get_backend_env(self, backend: BackendType, device: Optional[Device] = None) -> dict:
         """Get environment variables for the specified backend."""
         env = os.environ.copy()
         
-        if backend == BackendType.VULKAN:
-            pass
+        if backend == BackendType.ROCM:
+            if device:
+                env["HIP_VISIBLE_DEVICES"] = str(device.index)
+            else:
+                env["HIP_VISIBLE_DEVICES"] = "0"
+            
+            rocm_paths = [
+                "/opt/rocm/lib",
+                "/opt/rocm/core/lib",
+            ]
+            import glob
+            rocm_core_paths = glob.glob("/opt/rocm/core-*/lib")
+            rocm_paths.extend(rocm_core_paths)
+            
+            ld_path = env.get("LD_LIBRARY_PATH", "")
+            for path in rocm_paths:
+                if Path(path).exists():
+                    ld_path = f"{path}:{ld_path}"
+                    break
+            env["LD_LIBRARY_PATH"] = ld_path
+        
         elif backend == BackendType.CUDA:
-            pass
-        elif backend == BackendType.ROCM:
-            env["HIP_VISIBLE_DEVICES"] = "0"
+            if device:
+                env["CUDA_VISIBLE_DEVICES"] = str(device.index)
+        
         elif backend == BackendType.METAL:
+            pass
+        
+        elif backend == BackendType.VULKAN:
+            pass
+        
+        elif backend == BackendType.MLX:
+            pass
+        
+        elif backend == BackendType.MPS:
             pass
         
         return env
@@ -747,8 +1004,11 @@ def detect_best_backend() -> BackendType:
     if not devices:
         return BackendType.CPU
     
-    best = min([d.backend for d in devices if d.backend != BackendType.CPU], default=BackendType.CPU)
-    return best
+    gpu_devices = [d for d in devices if d.backend.is_gpu()]
+    if not gpu_devices:
+        return BackendType.CPU
+    
+    return min(gpu_devices, key=lambda d: d.backend).backend
 
 
 def get_device_config(model_path: Optional[str] = None, model_size_gb: float = 0) -> DeviceConfig:
@@ -776,18 +1036,8 @@ def calculate_optimal_context(
     available_vram_gb: float,
     ctx_size_requested: int = 0,
     vram_buffer_ratio: float = 0.15,
-) -> tuple[int, int, str]:
-    """Calculate optimal context size based on available VRAM.
-    
-    Args:
-        model_size_gb: Model size in GB
-        available_vram_gb: Available VRAM in GB
-        ctx_size_requested: Requested context size (0 = auto)
-        vram_buffer_ratio: Ratio of VRAM to leave free (default 15%)
-    
-    Returns:
-        (ctx_size, n_gpu_layers, notes)
-    """
+) -> tuple:
+    """Calculate optimal context size based on available VRAM."""
     notes = []
     
     usable_vram_gb = available_vram_gb * (1 - vram_buffer_ratio)
@@ -807,7 +1057,7 @@ def calculate_optimal_context(
             ctx = max_ctx
         
         notes.append(f"Context limited to {ctx}")
-        return ctx, -1, "; ".join(notes)
+        return ctx, -1, 0, "; ".join(notes)
     
     remaining_vram_gb = usable_vram_gb - model_size_gb
     
@@ -836,10 +1086,4 @@ def calculate_optimal_context(
     
     notes.append(f"Model: {model_size_gb:.1f}GB, Free VRAM: {remaining_vram_gb:.1f}GB")
     
-    return ctx, -1, "; ".join(notes)
-
-
-def get_vram_for_context(ctx_size: int) -> float:
-    """Estimate VRAM needed for given context size (in GB)."""
-    kv_cache_per_1k_ctx_gb = 0.002
-    return ctx_size * kv_cache_per_1k_ctx_gb / 1024
+    return ctx, -1, 0, "; ".join(notes)

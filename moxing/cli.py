@@ -1202,14 +1202,24 @@ def ollama_serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
     ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size"),
     device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu"),
-    backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, vulkan, cuda, rocm, metal, cpu"),
+    backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, cuda, rocm, vulkan, metal, mlx, mps, cpu"),
     auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port if default is in use"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
     skip_check: bool = typer.Option(False, "--skip-check", help="Skip compatibility check"),
-    kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q4_0, tq3 (3-bit TurboQuant), tq2"),
-    cpu_offload: int = typer.Option(0, "--cpu-offload", help="Number of layers to offload to CPU"),
+    kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q4_0, tq3, tq2"),
+    cpu_offload: int = typer.Option(0, "--cpu-offload", help="Number of layers to offload to CPU (0=auto)"),
+    prompt_offload: bool = typer.Option(False, "--prompt-offload", help="Prompt for CPU offload if needed"),
 ):
     """Serve an Ollama model with OpenAI-compatible API.
+    
+    Backends:
+    - cuda: NVIDIA GPUs (fastest)
+    - rocm: AMD GPUs with ROCm
+    - vulkan: Cross-platform GPU (works with AMD/NVIDIA/Intel)
+    - metal: Apple Silicon (macOS)
+    - mlx: Apple MLX backend (macOS, optimized for Apple Silicon)
+    - mps: Apple Metal Performance Shaders (macOS)
+    - cpu: CPU only
     
     KV Cache Quantization:
     - auto: Automatically choose based on available memory
@@ -1218,12 +1228,19 @@ def ollama_serve(
     - tq3: TurboQuant 3-bit (recommended, 5.3x compression)
     - tq2: TurboQuant 2-bit (extreme, 8x compression)
     
+    CPU Offload:
+    - 0: Auto-detect if needed (default, uses full GPU if possible)
+    - N: Offload N layers to CPU, rest to GPU
+    - Use --prompt-offload to be asked before offloading
+    
     Examples:
         moxing ollama serve gemma3:4b
+        moxing ollama serve gemma3:4b -b cuda
         moxing ollama serve omnicoder-9b --kv-cache tq3
         moxing ollama serve omnicoder-9b --cpu-offload 10
+        moxing ollama serve model --prompt-offload
     """
-    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, skip_check, kv_cache, cpu_offload)
+    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, skip_check, kv_cache, cpu_offload, prompt_offload)
 
 
 def ollama_serve_impl(
@@ -1238,6 +1255,7 @@ def ollama_serve_impl(
     skip_check: bool = False,
     kv_cache: str = "auto",
     cpu_offload: int = 0,
+    prompt_offload: bool = False,
 ):
     """Implementation of ollama serve with device/backend selection."""
     from moxing.ollama import OllamaClient, get_ollama_model
@@ -1349,7 +1367,7 @@ def ollama_serve_impl(
     available_vram_gb = 0
     if not is_cpu:
         if device_config.device.memory_mb > 0:
-            available_vram_gb = device_config.device.memory_gb * 0.85
+            available_vram_gb = device_config.device.free_memory_gb * 0.85
         else:
             if device_config.backend == BackendType.ROCM:
                 if "7900" in device_config.device.name:
@@ -1360,47 +1378,69 @@ def ollama_serve_impl(
                     available_vram_gb = 8.0
             elif device_config.backend == BackendType.CUDA:
                 available_vram_gb = 8.0
+            elif device_config.backend in [BackendType.METAL, BackendType.MLX, BackendType.MPS]:
+                available_vram_gb = 12.0
             else:
                 available_vram_gb = 4.0
     
     model_size_gb = ollama_model.size_gb
     
-    if not is_cpu and available_vram_gb > 0 and model_size_gb > available_vram_gb:
-        console.print(f"\n[yellow]Warning: Model ({model_size_gb:.1f}GB) > Available VRAM ({available_vram_gb:.1f}GB)[/yellow]")
-        
-        if cpu_offload == 0:
-            total_layers = 40
-            if model_size_gb > 30:
-                total_layers = 80
-            elif model_size_gb > 15:
-                total_layers = 60
-            elif model_size_gb > 8:
-                total_layers = 40
-            else:
-                total_layers = 32
-            
-            ratio = available_vram_gb / model_size_gb
-            gpu_layers = int(total_layers * ratio * 0.7)
-            cpu_offload = total_layers - gpu_layers
-            
-            console.print(f"[blue]Auto offloading {cpu_offload}/{total_layers} layers to CPU[/blue]")
-            console.print(f"[dim]Use --cpu-offload N to customize[/dim]\n")
-    
-    n_gpu_layers = 0 if is_cpu else -1
-    if cpu_offload > 0 and not is_cpu:
+    total_layers = 40
+    if model_size_gb > 30:
+        total_layers = 80
+    elif model_size_gb > 15:
+        total_layers = 60
+    elif model_size_gb > 8:
         total_layers = 40
-        if ollama_model.size_gb > 30:
-            total_layers = 80
-        elif ollama_model.size_gb > 15:
-            total_layers = 60
-        elif ollama_model.size_gb > 8:
-            total_layers = 40
-        else:
-            total_layers = 32
+    else:
+        total_layers = 32
+    
+    n_gpu_layers = -1 if not is_cpu else 0
+    actual_cpu_offload = cpu_offload
+    
+    if not is_cpu and available_vram_gb > 0:
+        offload_plan = detector.calculate_offload_plan(
+            device_config.device,
+            model_size_gb,
+            ctx_size,
+            total_layers
+        )
         
+        if offload_plan.needs_offload:
+            console.print(f"\n[yellow]Warning: Model ({model_size_gb:.1f}GB) may not fit entirely in VRAM ({available_vram_gb:.1f}GB)[/yellow]")
+            
+            if cpu_offload == 0:
+                if prompt_offload:
+                    from rich.prompt import Confirm
+                    console.print(f"[yellow]Suggested: offload {offload_plan.suggested_cpu_layers} layers to CPU[/yellow]")
+                    try:
+                        if Confirm.ask("Enable CPU offload?", default=True):
+                            actual_cpu_offload = offload_plan.suggested_cpu_layers
+                            n_gpu_layers = offload_plan.gpu_layers
+                            console.print(f"[blue]Will offload {actual_cpu_offload} layers to CPU[/blue]\n")
+                        else:
+                            console.print("[yellow]Proceeding without CPU offload (may fail if VRAM insufficient)[/yellow]\n")
+                    except:
+                        actual_cpu_offload = offload_plan.suggested_cpu_layers
+                        n_gpu_layers = offload_plan.gpu_layers
+                else:
+                    actual_cpu_offload = offload_plan.suggested_cpu_layers
+                    n_gpu_layers = offload_plan.gpu_layers
+                    console.print(f"[blue]Auto offloading {actual_cpu_offload}/{total_layers} layers to CPU[/blue]")
+                    console.print(f"[dim]Use --cpu-offload N to customize, or --prompt-offload to be asked[/dim]\n")
+            else:
+                actual_cpu_offload = cpu_offload
+                n_gpu_layers = total_layers - cpu_offload
+                if n_gpu_layers < 1:
+                    n_gpu_layers = 1
+                    actual_cpu_offload = total_layers - 1
+        else:
+            console.print(f"[green]Model fits in VRAM: {model_size_gb:.1f}GB < {available_vram_gb:.1f}GB[/green]")
+    elif cpu_offload > 0 and not is_cpu:
         n_gpu_layers = total_layers - cpu_offload
         if n_gpu_layers < 0:
             n_gpu_layers = 0
+        actual_cpu_offload = cpu_offload
     
     device_str = "auto"
     if not is_cpu:
@@ -1410,7 +1450,7 @@ def ollama_serve_impl(
         elif device_config.backend == BackendType.VULKAN:
             device_str = "auto"
             console.print("[dim]Using auto Vulkan device selection[/dim]")
-        elif device_config.backend == BackendType.METAL:
+        elif device_config.backend in [BackendType.METAL, BackendType.MLX, BackendType.MPS]:
             device_str = f"MTL{device_config.device.index}"
         elif device_config.backend == BackendType.CUDA:
             device_str = f"CUDA{device_config.device.index}"
@@ -1418,17 +1458,8 @@ def ollama_serve_impl(
             device_str = "auto"
     
     gpu_layers_display = "0 (CPU)" if is_cpu else (f"{n_gpu_layers}" if n_gpu_layers > 0 else "all")
-    if cpu_offload > 0 and not is_cpu:
-        total_layers = 40
-        if ollama_model.size_gb > 30:
-            total_layers = 80
-        elif ollama_model.size_gb > 15:
-            total_layers = 60
-        elif ollama_model.size_gb > 8:
-            total_layers = 40
-        else:
-            total_layers = 32
-        gpu_layers_display = f"{n_gpu_layers}/{total_layers} (CPU: {cpu_offload})"
+    if actual_cpu_offload > 0 and not is_cpu:
+        gpu_layers_display = f"{n_gpu_layers}/{total_layers} (CPU: {actual_cpu_offload})"
     
     device_display = device_config.device.name
     backend_display = device_config.backend.value.upper()
@@ -1449,8 +1480,8 @@ def ollama_serve_impl(
     ))
     
     cache_info = f"\n[dim]KV Cache: {kv_cache}" if kv_cache != "auto" else ""
-    if cpu_offload > 0:
-        cache_info += f"\n[dim]CPU Offload: {cpu_offload} layers"
+    if actual_cpu_offload > 0:
+        cache_info += f"\n[dim]CPU Offload: {actual_cpu_offload} layers"
     
     console.print(Panel(
         f"[green]Model:[/green] {ollama_model.full_name}\n"
@@ -1473,8 +1504,8 @@ def ollama_serve_impl(
             device=device_str,
             gpu_backend=device_config.backend.value,
             kv_cache_quant=kv_cache,
-            cpu_offload=cpu_offload > 0,
-            cpu_offload_layers=cpu_offload,
+            cpu_offload=actual_cpu_offload > 0,
+            cpu_offload_layers=actual_cpu_offload,
         )
         
         console.print(Panel(
