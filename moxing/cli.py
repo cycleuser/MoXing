@@ -1243,6 +1243,70 @@ def ollama_serve(
     ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, skip_check, kv_cache, cpu_offload, prompt_offload)
 
 
+def serve_with_ollama_backend(
+    model: str,
+    port: int = 8080,
+    host: str = "127.0.0.1",
+    ctx_size: int = 4096,
+    device: str = "auto",
+    backend: str = "auto",
+):
+    """Serve a model using Ollama's backend (for models requiring Ollama patches)."""
+    import subprocess
+    import time
+    import signal
+    from moxing.server import find_available_port, is_port_in_use
+    
+    ollama_port = 11434
+    
+    console.print(Panel(
+        f"[green]Model:[/green] {model}\n"
+        f"[blue]Backend:[/blue] Ollama (patched llama.cpp)\n"
+        f"[yellow]Port:[/yellow] {port}\n"
+        f"[cyan]API:[/cyan] OpenAI compatible at http://{host}:{port}/v1",
+        title="Ollama Backend"
+    ))
+    
+    console.print("[blue]Starting Ollama service...[/blue]")
+    
+    result = subprocess.run(
+        ["ollama", "serve"],
+        capture_output=True,
+        text=True,
+        start_new_session=True
+    )
+    
+    time.sleep(2)
+    
+    console.print("[blue]Loading model in Ollama...[/blue]")
+    
+    load_result = subprocess.run(
+        ["ollama", "run", model, "--keepalive", "24h"],
+        capture_output=True,
+        text=True,
+        timeout=60
+    )
+    
+    console.print(Panel(
+        f"[green]Ollama API:[/green] http://127.0.0.1:{ollama_port}/api\n"
+        f"[green]OpenAI API:[/green] http://127.0.0.1:{ollama_port}/v1\n"
+        f"[yellow]Press Ctrl+C to stop[/yellow]",
+        title=f"Ollama: {model}"
+    ))
+    
+    console.print(f"\n[dim]This model uses Ollama's patched backend with architecture support.[/dim]")
+    console.print(f"[dim]Ollama is running on port {ollama_port}[/dim]")
+    
+    try:
+        import httpx
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopping Ollama service...[/yellow]")
+    
+    raise typer.Exit(0)
+
+
 def ollama_serve_impl(
     model: str,
     port: int = 8080,
@@ -1310,18 +1374,10 @@ def ollama_serve_impl(
         try:
             gguf_path = _get_compatible_gguf(model, gguf_path, ollama_model.size_gb, verbose)
         except UnsupportedArchitectureError as e:
-            console.print(f"\n[red bold]Unsupported Model Architecture[/red bold]")
-            console.print(f"[red]{e}[/red]")
-            console.print(f"\n[yellow]This model uses an architecture not supported by standard llama.cpp.[/yellow]")
-            console.print(f"[dim]Ollama's forked llama.cpp has patches for this model.[/dim]")
-            console.print(f"\n[green]Options:[/green]")
-            console.print(f"  1. Use Ollama directly:")
-            console.print(f"     [cyan]ollama run {model}[/cyan]")
-            console.print(f"  2. Try MLX backend (macOS only):")
-            console.print(f"     [cyan]moxing ollama serve {model} -b mlx[/cyan]")
-            console.print(f"  3. Find a compatible GGUF on HuggingFace:")
-            console.print(f"     [dim]Look for Q4_K_M or similar quantizations[/dim]")
-            raise typer.Exit(1)
+            console.print(f"\n[yellow]Model architecture requires Ollama backend[/yellow]")
+            console.print(f"[dim]{e}[/dim]")
+            console.print(f"[blue]Switching to Ollama service...[/blue]")
+            return serve_with_ollama_backend(model, port, host, ctx_size, device, backend)
         except Exception as e:
             console.print(f"[red]Error in compatibility check: {e}[/red]")
             import traceback
