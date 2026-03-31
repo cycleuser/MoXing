@@ -198,9 +198,13 @@ class DeviceDetector:
     
     def _detect_amd_via_rocmsmi(self) -> List[Device]:
         devices = []
+        gpu_names = {}
+        gpu_vram = {}
+        gpu_vram_used = {}
+        
         try:
             result = subprocess.run(
-                ["rocm-smi", "--showid", "--showmeminfo", "vram"],
+                ["rocm-smi", "--showid"],
                 capture_output=True,
                 encoding='utf-8',
                 errors='replace',
@@ -208,41 +212,57 @@ class DeviceDetector:
             )
             
             if result.returncode == 0:
-                lines = result.stdout.split("\n")
-                
-                gpu_names = {}
-                gpu_vram = {}
-                
-                for line in lines:
-                    line = line.strip()
-                    
+                for line in result.stdout.split("\n"):
                     if "Device Name:" in line:
-                        match = re.match(r"GPU\[(\d+)\].*Device Name:\s*(.+)", line)
+                        match = re.search(r"GPU\[(\d+)\].*Device Name:\s*(.+)", line)
                         if match:
                             gpu_id = int(match.group(1))
                             name = match.group(2).strip()
                             gpu_names[gpu_id] = name
-                    
+        except Exception:
+            pass
+        
+        try:
+            result = subprocess.run(
+                ["rocm-smi", "--showmeminfo", "vram"],
+                capture_output=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                for line in result.stdout.split("\n"):
                     if "VRAM Total Memory (B):" in line:
-                        match = re.match(r"GPU\[(\d+)\].*VRAM Total Memory \(B\):\s*(\d+)", line)
+                        match = re.search(r"GPU\[(\d+)\].*VRAM Total Memory \(B\):\s*(\d+)", line)
                         if match:
                             gpu_id = int(match.group(1))
                             vram_bytes = int(match.group(2))
                             gpu_vram[gpu_id] = int(vram_bytes / (1024 * 1024))
-                
-                for gpu_id in sorted(set(gpu_names.keys()) | set(gpu_vram.keys())):
-                    name = gpu_names.get(gpu_id, "AMD GPU")
-                    vram_mb = gpu_vram.get(gpu_id, 0)
-                    devices.append(Device(
-                        index=gpu_id,
-                        name=name,
-                        backend=BackendType.ROCM,
-                        memory_mb=vram_mb,
-                        free_memory_mb=vram_mb,
-                        vendor="amd"
-                    ))
-        except Exception as e:
+                    
+                    if "VRAM Total Used Memory (B):" in line:
+                        match = re.search(r"GPU\[(\d+)\].*VRAM Total Used Memory \(B\):\s*(\d+)", line)
+                        if match:
+                            gpu_id = int(match.group(1))
+                            used_bytes = int(match.group(2))
+                            gpu_vram_used[gpu_id] = int(used_bytes / (1024 * 1024))
+        except Exception:
             pass
+        
+        for gpu_id in sorted(set(gpu_names.keys()) | set(gpu_vram.keys())):
+            name = gpu_names.get(gpu_id, "AMD GPU")
+            vram_mb = gpu_vram.get(gpu_id, 0)
+            used_mb = gpu_vram_used.get(gpu_id, 0)
+            free_mb = max(0, vram_mb - used_mb) if vram_mb > 0 else 0
+            devices.append(Device(
+                index=gpu_id,
+                name=name,
+                backend=BackendType.ROCM,
+                memory_mb=vram_mb,
+                free_memory_mb=free_mb,
+                vendor="amd"
+            ))
+        
         return devices
     
     def _detect_via_sysfs(self) -> List[Device]:
@@ -308,9 +328,34 @@ class DeviceDetector:
     @property
     def binary_path(self) -> Path:
         if self._binary_path is None:
-            from moxing.server import LlamaServer
-            self._binary_path = LlamaServer.get_binary_path()
+            self._binary_path = self._find_best_detection_binary()
         return self._binary_path
+    
+    def _find_best_detection_binary(self) -> Path:
+        from moxing.binaries import get_binary_manager, BIN_DIR, PlatformDetector
+        
+        platform_name = PlatformDetector.get_platform_name()
+        binary_name = "llama-server" if sys.platform != "win32" else "llama-server.exe"
+        
+        preferred_backends = ["rocm", "cuda", "vulkan", "cpu"]
+        if PlatformDetector.get_os() == "darwin":
+            preferred_backends = ["metal", "cpu"]
+        
+        for backend in preferred_backends:
+            bundled_dir = BIN_DIR / f"{platform_name}-{backend}"
+            if bundled_dir.exists():
+                binary_path = bundled_dir / binary_name
+                if binary_path.exists():
+                    return binary_path
+        
+        try:
+            manager = get_binary_manager("auto")
+            if manager.has_binaries():
+                return manager.get_binary_path("llama-server")
+        except Exception:
+            pass
+        
+        raise FileNotFoundError("No llama-server binary found for device detection")
     
     def detect(self) -> List[Device]:
         """Detect all available devices."""
@@ -374,8 +419,7 @@ class DeviceDetector:
         except Exception as e:
             pass
         
-        amd_detected = any(d.backend == BackendType.ROCM for d in self._devices)
-        if not amd_detected and self._amd_permission_ok:
+        if self._amd_permission_ok:
             for detect_func in [
                 self._detect_amd_via_rocmsmi,
                 self._detect_amd_via_amdsmi,
@@ -385,8 +429,23 @@ class DeviceDetector:
                     amd_devices = detect_func()
                     if amd_devices:
                         for dev in amd_devices:
-                            exists = any(d.index == dev.index and d.backend == BackendType.ROCM for d in self._devices)
-                            if not exists:
+                            name_lower = dev.name.lower()
+                            key = self._get_device_key(name_lower)
+                            
+                            existing = None
+                            for d in self._devices:
+                                d_key = self._get_device_key(d.name.lower())
+                                if d_key == key:
+                                    existing = d
+                                    break
+                            
+                            if existing:
+                                if dev.memory_mb > 0:
+                                    existing.memory_mb = dev.memory_mb
+                                    existing.free_memory_mb = dev.free_memory_mb
+                                if dev.backend == BackendType.ROCM:
+                                    existing.backend = BackendType.ROCM
+                            else:
                                 self._devices.append(dev)
                         break
                 except Exception:
@@ -521,6 +580,31 @@ class DeviceDetector:
             pass
         return 16.0
     
+    def _get_device_key(self, name_lower: str) -> str:
+        """Get a unique key for device deduplication."""
+        if "7900" in name_lower or "7900xtx" in name_lower.replace(" ", ""):
+            return "7900xtx"
+        elif "610m" in name_lower:
+            return "610m"
+        elif "4070" in name_lower and "laptop" in name_lower:
+            return "rtx4070_laptop"
+        elif "4070" in name_lower:
+            return "rtx4070"
+        elif "4080" in name_lower:
+            return "rtx4080"
+        elif "4090" in name_lower:
+            return "rtx4090"
+        elif "radeon" in name_lower and ("rx" in name_lower or "7" in name_lower):
+            if "7900" in name_lower:
+                return "7900xtx"
+            elif "610" in name_lower:
+                return "610m"
+            else:
+                match = re.search(r'rx\s*(\d+)', name_lower)
+                if match:
+                    return f"rx{match.group(1)}"
+        return name_lower.replace(" ", "_")[:30]
+    
     def _reassign_device_indices(self):
         unique_devices: List[Device] = []
         seen_keys: Dict[str, Device] = {}
@@ -534,49 +618,26 @@ class DeviceDetector:
             if any(sr in dev.name.lower() for sr in software_renderers):
                 continue
             
-            name_lower = dev.name.lower()
-            
-            key = None
-            if "7900" in name_lower or "7900xtx" in name_lower.replace(" ", ""):
-                key = "7900xtx"
-            elif "610m" in name_lower:
-                key = "610m"
-            elif "4070" in name_lower and "laptop" in name_lower:
-                key = "rtx4070_laptop"
-            elif "4070" in name_lower:
-                key = "rtx4070"
-            elif "4080" in name_lower:
-                key = "rtx4080"
-            elif "4090" in name_lower:
-                key = "rtx4090"
-            elif "radeon" in name_lower and ("rx" in name_lower or "7" in name_lower):
-                if "7900" in name_lower:
-                    key = "7900xtx"
-                elif "610" in name_lower:
-                    key = "610m"
-                else:
-                    match = re.search(r'rx\s*(\d+)', name_lower)
-                    if match:
-                        key = f"rx{match.group(1)}"
-                    else:
-                        key = dev.name.replace(" ", "_").lower()[:30]
-            else:
-                key = dev.name.replace(" ", "_").lower()[:30]
+            key = self._get_device_key(dev.name.lower())
             
             if key in seen_keys:
                 existing = seen_keys[key]
                 
-                if dev.memory_mb > 0 and existing.memory_mb == 0:
+                if dev.backend in [BackendType.ROCM, BackendType.CUDA]:
+                    if dev.memory_mb > 0:
+                        existing.memory_mb = dev.memory_mb
+                        existing.free_memory_mb = dev.free_memory_mb
+                        existing.name = dev.name
+                    existing.backend = dev.backend
+                elif dev.memory_mb > 0 and existing.memory_mb == 0:
                     existing.memory_mb = dev.memory_mb
                     existing.free_memory_mb = dev.free_memory_mb
                 
-                if dev.backend == BackendType.ROCM:
-                    existing.backend = BackendType.ROCM
+                if existing.backend == BackendType.VULKAN and dev.backend in [BackendType.ROCM, BackendType.CUDA]:
+                    existing.backend = dev.backend
                     if dev.memory_mb > 0:
-                        existing.name = dev.name
-                
-                if dev.backend == BackendType.CUDA and existing.backend != BackendType.CUDA:
-                    existing.backend = BackendType.CUDA
+                        existing.memory_mb = dev.memory_mb
+                        existing.free_memory_mb = dev.free_memory_mb
             else:
                 seen_keys[key] = dev
         
