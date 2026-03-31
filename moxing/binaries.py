@@ -623,31 +623,54 @@ class BinaryManager:
             if not name.endswith((".zip", ".tar.gz", ".tgz")):
                 continue
             
-            if "cudart" in name:
+            if "cudart" in name and "cudart-llama" not in name:
                 continue
             
             if "xcframework" in name:
                 continue
             
-            if "openEuler" in name or "310p" in name or "910b" in name or "s390x" in name:
+            if "openeuler" in name or "310p" in name or "910b" in name or "s390x" in name:
                 continue
             
             os_match = False
-            if os_name == "windows" and ("win" in name or "windows" in name):
-                os_match = True
-            elif os_name == "linux" and ("ubuntu" in name or "linux" in name):
-                os_match = True
-            elif os_name == "darwin" and ("macos" in name or "darwin" in name):
-                os_match = True
+            os_score = 0
+            
+            if os_name == "windows":
+                if "win" in name:
+                    os_match = True
+                    os_score = 10
+            elif os_name == "linux":
+                if "ubuntu" in name:
+                    os_match = True
+                    os_score = 10
+                elif "linux" in name:
+                    os_match = True
+                    os_score = 5
+            elif os_name == "darwin":
+                if "macos" in name:
+                    os_match = True
+                    os_score = 10
+                elif "darwin" in name or "osx" in name:
+                    os_match = True
+                    os_score = 5
             
             if not os_match:
                 continue
             
             arch_match = False
-            if arch == "arm64" and "arm64" in name:
-                arch_match = True
-            elif arch == "x64" and ("x64" in name or "x86" in name):
-                arch_match = True
+            arch_score = 0
+            
+            if arch == "arm64":
+                if "arm64" in name or "aarch64" in name:
+                    arch_match = True
+                    arch_score = 10
+            elif arch == "x64":
+                if "x64" in name or "x86_64" in name:
+                    arch_match = True
+                    arch_score = 10
+                elif "x86" in name:
+                    arch_match = True
+                    arch_score = 5
             
             if not arch_match:
                 continue
@@ -658,26 +681,32 @@ class BinaryManager:
             if backend == "cuda":
                 if "cuda" in name:
                     backend_match = True
+                    if "cuda-12" in name or "cuda-13" in name:
+                        backend_score = 15
+                    else:
+                        backend_score = 10
+            elif backend == "rocm":
+                if "rocm" in name or "hip" in name:
+                    backend_match = True
                     backend_score = 10
             elif backend == "vulkan":
                 if "vulkan" in name:
                     backend_match = True
                     backend_score = 10
-            elif backend == "rocm":
-                if "rocm" in name or "hip" in name:
+            elif backend == "metal":
+                if os_name == "darwin":
+                    if "cuda" not in name and "vulkan" not in name and "rocm" not in name:
+                        backend_match = True
+                        backend_score = 10
+            elif backend == "cpu":
+                excludes = ["cuda", "vulkan", "rocm", "hip", "sycl", "openvino", "opencl"]
+                if not any(x in name for x in excludes):
                     backend_match = True
                     backend_score = 10
-            elif backend == "metal":
-                if "metal" in name or (os_name == "darwin" and "cuda" not in name and "vulkan" not in name):
-                    backend_match = True
-                    backend_score = 5 if "metal" not in name else 10
-            elif backend == "cpu":
-                if "cuda" not in name and "vulkan" not in name and "rocm" not in name and "hip" not in name and "sycl" not in name and "openvino" not in name:
-                    backend_match = True
-                    backend_score = 5
             
             if backend_match:
-                candidates.append((asset, backend_score, name))
+                total_score = os_score + arch_score + backend_score
+                candidates.append((asset, total_score, name))
         
         if candidates:
             candidates.sort(key=lambda x: (-x[1], len(x[2])))
@@ -742,7 +771,7 @@ class BinaryManager:
             return "skip_once"
     
     def download_binaries(self, force: bool = False, quiet: bool = False, check_updates: bool = True) -> Path:
-        """Download binaries from moxing releases, fallback to llama.cpp."""
+        """Download binaries with priority: MoXing patched -> llama.cpp official -> MoXing fallback."""
         
         if not force and self.has_binaries():
             if check_updates and should_check_for_updates():
@@ -772,7 +801,78 @@ class BinaryManager:
             return self._do_download(download_url, asset_name, tag, quiet)
         
         if not quiet:
-            console.print("[blue]Downloading from moxing releases...[/blue]")
+            console.print(f"[blue]Downloading llama.cpp binaries for {self.backend}...[/blue]")
+        
+        try:
+            release = self.get_release(MOXING_REPO, "binaries-patched")
+            tag = release.get("tag_name", "binaries-patched")
+            body = release.get("body", "")
+            
+            llama_version = None
+            patched_info = None
+            for line in body.split("\n"):
+                if line.startswith("llama.cpp:"):
+                    llama_version = line.split(":", 1)[1].strip()
+                elif line.startswith("patches:"):
+                    patched_info = line.split(":", 1)[1].strip()
+            
+            if not llama_version:
+                llama_version = tag
+            
+            asset = self.find_asset_for_platform(release["assets"])
+            
+            if asset:
+                download_url = asset["browser_download_url"]
+                asset_name = asset["name"]
+                
+                if not quiet:
+                    console.print(f"[blue]MoXing patched release (recommended)[/blue]")
+                    console.print(f"[blue]llama.cpp: {llama_version}[/blue]")
+                    if patched_info:
+                        console.print(f"[blue]Patches: {patched_info}[/blue]")
+                    console.print(f"[blue]Asset: {asset_name}[/blue]")
+                
+                cache_dir = self._do_download(download_url, asset_name, f"{llama_version}-patched", quiet, patched=True)
+                return cache_dir
+        except Exception as e:
+            if not quiet:
+                console.print(f"[yellow]MoXing patched release not available: {e}[/yellow]")
+        
+        try:
+            release = self.get_release(LLAMA_CPP_REPO, "latest")
+            tag = release["tag_name"]
+            asset = self.find_llama_cpp_asset(release["assets"])
+            
+            if asset:
+                download_url = asset["browser_download_url"]
+                asset_name = asset["name"]
+                
+                if not quiet:
+                    console.print(f"[blue]Official llama.cpp release[/blue]")
+                    console.print(f"[blue]Version: {tag}[/blue]")
+                    console.print(f"[blue]Asset: {asset_name}[/blue]")
+                
+                cache_dir = self._do_download(download_url, asset_name, tag, quiet)
+                
+                if PlatformDetector.get_os() == "windows" and self.backend == "cuda":
+                    cudart_asset = self._find_cudart_asset(release["assets"])
+                    if cudart_asset:
+                        if not quiet:
+                            console.print("[blue]Downloading CUDA runtime DLLs...[/blue]")
+                        self._do_download(
+                            cudart_asset["browser_download_url"],
+                            cudart_asset["name"],
+                            tag,
+                            quiet
+                        )
+                
+                return cache_dir
+        except Exception as e:
+            if not quiet:
+                console.print(f"[yellow]llama.cpp release download failed: {e}[/yellow]")
+        
+        if not quiet:
+            console.print("[blue]Trying MoXing releases as fallback...[/blue]")
         
         try:
             release = self.get_release(MOXING_REPO, "binaries")
@@ -801,40 +901,9 @@ class BinaryManager:
                 return self._do_download(download_url, asset_name, llama_version, quiet)
         except Exception as e:
             if not quiet:
-                console.print(f"[yellow]Moxing release not found: {e}[/yellow]")
+                console.print(f"[yellow]MoXing release not found: {e}[/yellow]")
         
-        if not quiet:
-            console.print("[blue]Falling back to llama.cpp releases...[/blue]")
-        
-        release = self.get_release(LLAMA_CPP_REPO, "latest")
-        tag = release["tag_name"]
-        asset = self.find_llama_cpp_asset(release["assets"])
-        
-        if not asset:
-            raise RuntimeError(f"No binary found for {self.platform_name} ({self.backend})")
-        
-        download_url = asset["browser_download_url"]
-        asset_name = asset["name"]
-        
-        if not quiet:
-            console.print(f"[blue]Found: {asset_name}[/blue]")
-            console.print(f"[blue]llama.cpp version: {tag}[/blue]")
-        
-        cache_dir = self._do_download(download_url, asset_name, tag, quiet)
-        
-        if PlatformDetector.get_os() == "windows" and self.backend == "cuda":
-            cudart_asset = self._find_cudart_asset(release["assets"])
-            if cudart_asset:
-                if not quiet:
-                    console.print("[blue]Downloading CUDA runtime DLLs...[/blue]")
-                self._do_download(
-                    cudart_asset["browser_download_url"],
-                    cudart_asset["name"],
-                    tag,
-                    quiet
-                )
-        
-        return cache_dir
+        raise RuntimeError(f"No binary found for {self.platform_name} ({self.backend})")
     
     def _find_cudart_asset(self, assets: List[dict]) -> Optional[dict]:
         """Find CUDA runtime DLLs asset for Windows."""
