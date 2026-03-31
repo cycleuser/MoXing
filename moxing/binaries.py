@@ -913,10 +913,12 @@ class BinaryManager:
                 return asset
         return None
     
-    def _do_download(self, download_url: str, asset_name: str, tag: str, quiet: bool = False) -> Path:
+    def _do_download(self, download_url: str, asset_name: str, tag: str, quiet: bool = False, patched: bool = False) -> Path:
         """Perform the actual download and extraction."""
         if not quiet:
             console.print(f"[blue]Release: {tag}[/blue]")
+            if patched:
+                console.print(f"[blue]Source: MoXing patched release (with Ollama patches)[/blue]")
             console.print(f"[blue]Backend: {self.backend}[/blue]")
             console.print(f"[blue]Downloading: {asset_name}[/blue]")
         
