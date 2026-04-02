@@ -107,7 +107,8 @@ def serve(
     device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu (use 'moxing devices' to list)"),
     auto: bool = typer.Option(True, "--auto/--no-auto", help="Auto-detect best device"),
     auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port"),
-    verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed monitoring in terminal"),
+    web_monitor: bool = typer.Option(False, "-w", "--web", help="Enable web monitoring page"),
     force: bool = typer.Option(False, "-f", "--force", help="Force use specified backend without compatibility check"),
     kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q5_0, q4_0, tq4, tq3.5, tq3, tq2.5, tq2"),
     cpu_offload: int = typer.Option(0, "--cpu-offload", help="Number of layers to offload to CPU (0=auto)"),
@@ -155,11 +156,11 @@ def serve(
     
     if model.startswith("ollama:"):
         ollama_model = model[7:]
-        ollama_serve_impl(ollama_model, port, host, ctx_size, device, backend, auto_port, verbose, False)
+        ollama_serve_impl(ollama_model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor)
         return
     
     if backend == "ollama":
-        ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, False)
+        ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor)
         return
     
     model_file = Path(model)
@@ -395,9 +396,7 @@ def serve(
             raise typer.Exit(1)
         
         try:
-            while server.is_running():
-                import time
-                time.sleep(1)
+            serve_with_verbose_monitor(server, verbose=verbose, web_monitor=web_monitor)
         except KeyboardInterrupt:
             console.print("\n[yellow]Shutting down...[/yellow]")
             server.stop()
@@ -411,32 +410,76 @@ def serve(
 @app.command()
 def run(
     model: str = typer.Argument(..., help="Model name or path"),
-    prompt: str = typer.Option("Hello!", "-p", "--prompt", help="Prompt to send"),
+    prompt: str = typer.Option(None, "-p", "--prompt", help="Single prompt (leave empty for interactive chat)"),
     quant: str = typer.Option("Q4_K_M", "-q", "--quant", help="Quantization"),
     tokens: int = typer.Option(256, "-n", "--tokens", help="Max tokens to generate"),
     ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size"),
     source: str = typer.Option("auto", "-s", "--source", help="Model source"),
-    chat: bool = typer.Option(True, "--chat/--completion", help="Chat or completion mode"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed monitoring and statistics"),
+    backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, vulkan, cuda, metal, cpu"),
+    kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization"),
 ):
-    """Run inference with a model (auto-downloads if needed)."""
+    """Run inference with a model (auto-downloads if needed).
+    
+    Examples:
+        moxing run model.gguf                    # Interactive chat
+        moxing run model.gguf -p "Hello"         # Single prompt
+        moxing run model.gguf -v                 # Verbose monitoring
+        moxing run model.gguf -p "Hello" -v      # Single prompt with stats
+        moxing run model.gguf --kv-cache tq3.5   # With TurboQuant
+    """
     from moxing.runner import AutoRunner
+    from moxing.server import find_available_port
     
     runner = AutoRunner()
     
     try:
-        result = runner.run(
+        port = find_available_port(8080)
+        
+        server = runner.server(
             model=model,
-            prompt=prompt,
             quant=quant,
             source=source,
             ctx_size=ctx_size,
-            n_tokens=tokens,
-            chat=chat
+            backend=backend,
+            kv_cache_quant=kv_cache,
+            port=port
         )
-        console.print(result)
+        
+        model_name = Path(model).name if Path(model).exists() else model
+        
+        console.print(Panel(
+            f"[cyan]Model:[/cyan] {model_name}\n"
+            f"[cyan]Context:[/cyan] {ctx_size}\n"
+            f"[cyan]Backend:[/cyan] {backend}\n"
+            f"[cyan]KV Cache:[/cyan] {kv_cache}",
+            title="Starting Server"
+        ))
+        
+        server.start(wait=True)
+        
+        console.print("[green]Server ready![/green]")
+        
+        run_with_verbose_monitor(
+            server=server,
+            model_name=model_name,
+            prompt=prompt,
+            max_tokens=tokens,
+            verbose=verbose
+        )
+        
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Shutting down...[/yellow]")
+        if server:
+            server.stop()
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
         raise typer.Exit(1)
+    finally:
+        if server:
+            server.stop()
 
 
 @app.command("chat")
@@ -1124,6 +1167,312 @@ def check_model(
         raise typer.Exit(1)
 
 
+def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_tokens: int = 256, verbose: bool = False):
+    """Run inference with verbose monitoring display.
+    
+    Args:
+        server: LlamaServer instance
+        model_name: Model name for display
+        prompt: Optional single prompt (if None, enters interactive mode)
+        max_tokens: Maximum tokens to generate
+        verbose: Enable detailed monitoring
+    """
+    from moxing.client import Client
+    from moxing.enhanced_monitor import EnhancedMonitor
+    from rich.live import Live
+    from rich.layout import Layout
+    from rich.text import Text
+    import time
+    import threading
+    
+    monitor = None
+    if verbose:
+        monitor = EnhancedMonitor(server.host, server.port)
+        monitor.fetch_server_info()
+        monitor.start_collection(interval=1.0)
+        if server._process:
+            monitor.set_process(server._process.pid)
+    
+    client = Client(server.base_url)
+    
+    if prompt:
+        messages = [{"role": "user", "content": prompt}]
+        
+        start_time = time.time()
+        first_token_time = None
+        token_count = 0
+        
+        console.print(f"\n[bold blue]Prompt:[/bold blue] {prompt}\n")
+        
+        if verbose and monitor:
+            snapshot = monitor._collect_snapshot()
+            monitor.history.add(snapshot)
+            
+            console.print(Panel(
+                f"[dim]GPU: {snapshot.gpu_memory_mb:.0f} MB | RAM: {snapshot.ram_used_mb/1024:.2f} GB | CPU: {snapshot.cpu_percent:.1f}%[/dim]",
+                title="📊 Resources"
+            ))
+        
+        console.print("[bold green]Response:[/bold green]")
+        
+        response = client.chat.completions.create(
+            model="llama",
+            messages=messages,
+            max_tokens=max_tokens,
+            stream=True
+        )
+        
+        full_response = ""
+        last_stats_time = time.time()
+        
+        for chunk in response:
+            if isinstance(chunk, dict) and chunk.get("choices"):
+                delta = chunk["choices"][0].get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    if first_token_time is None:
+                        first_token_time = time.time()
+                    full_response += content
+                    token_count += 1
+                    print(content, end="", flush=True)
+                    
+                    if verbose and monitor and (time.time() - last_stats_time > 0.5):
+                        last_stats_time = time.time()
+        
+        total_time = time.time() - start_time
+        print()
+        
+        if verbose and monitor:
+            snapshot = monitor._collect_snapshot()
+            monitor.history.add(snapshot)
+            stats = monitor.history.get_stats(60)
+            
+            speed = token_count / total_time if total_time > 0 else 0
+            ttft = first_token_time - start_time if first_token_time else 0
+            
+            console.print()
+            console.print(Panel(
+                f"[bold cyan]📊 Performance[/bold cyan]\n\n"
+                f"[green]Tokens:[/green] {token_count} | "
+                f"[green]Time:[/green] {total_time:.2f}s | "
+                f"[green]Speed:[/green] {speed:.1f} tok/s | "
+                f"[green]TTFT:[/green] {ttft:.2f}s\n\n"
+                f"[yellow]Memory:[/yellow] GPU: {snapshot.gpu_memory_mb:.0f} MB | "
+                f"RAM: {snapshot.ram_used_mb/1024:.2f} GB\n"
+                f"[blue]CPU:[/blue] {snapshot.cpu_percent:.1f}% | "
+                f"[blue]Avg Speed (60s):[/blue] {stats.get('avg_generate_speed', 0):.1f} tok/s",
+                title="Summary"
+            ))
+            
+            monitor.stop_collection()
+        
+        return full_response
+    else:
+        console.print("[green]Interactive chat ready! Type 'exit' or 'quit' to end.[/green]")
+        console.print("[dim]Ctrl+C to stop[/dim]\n")
+        
+        messages = []
+        
+        while True:
+            try:
+                if verbose and monitor:
+                    snapshot = monitor._collect_snapshot()
+                    monitor.history.add(snapshot)
+                    stats = monitor.history.get_stats(60)
+                    
+                    console.print()
+                    console.print(Panel(
+                        f"[dim]GPU: {snapshot.gpu_memory_mb:.0f} MB (avg: {stats.get('avg_gpu_memory', 0):.0f}) | "
+                        f"RAM: {snapshot.ram_used_mb/1024:.2f} GB | "
+                        f"CPU: {snapshot.cpu_percent:.1f}% (avg: {stats.get('avg_cpu', 0):.1f}%)[/dim]",
+                        title="📊 Live Monitor"
+                    ))
+                
+                user_input = Prompt.ask("\n[bold blue]You[/bold blue]")
+                
+                if user_input.lower() in ("exit", "quit", "q"):
+                    break
+                
+                messages.append({"role": "user", "content": user_input})
+                
+                start_time = time.time()
+                first_token_time = None
+                token_count = 0
+                
+                console.print("[bold green]Assistant[/bold green]: ", end="")
+                
+                response = client.chat.completions.create(
+                    model="llama",
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    stream=True
+                )
+                
+                assistant_msg = ""
+                for chunk in response:
+                    if isinstance(chunk, dict) and chunk.get("choices"):
+                        delta = chunk["choices"][0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            if first_token_time is None:
+                                first_token_time = time.time()
+                            assistant_msg += content
+                            token_count += 1
+                            print(content, end="", flush=True)
+                
+                print()
+                
+                total_time = time.time() - start_time
+                
+                if verbose:
+                    speed = token_count / total_time if total_time > 0 else 0
+                    ttft = first_token_time - start_time if first_token_time else 0
+                    
+                    console.print(f"[dim]  {token_count} tokens | {total_time:.2f}s | {speed:.1f} tok/s | TTFT: {ttft:.2f}s[/dim]")
+                
+                messages.append({"role": "assistant", "content": assistant_msg})
+                
+            except KeyboardInterrupt:
+                break
+        
+        if verbose and monitor:
+            stats = monitor.history.get_stats(60)
+            total_prompt = sum(1 for m in messages if m.get("role") == "user")
+            total_response = sum(1 for m in messages if m.get("role") == "assistant")
+            
+            console.print()
+            console.print(Panel(
+                f"[bold cyan]📊 Session Summary[/bold cyan]\n\n"
+                f"[green]Messages:[/green] {total_prompt} prompts, {total_response} responses\n\n"
+                f"[yellow]Memory:[/yellow]\n"
+                f"  Avg GPU: {stats.get('avg_gpu_memory', 0):.0f} MB\n"
+                f"  Max GPU: {stats.get('max_gpu_memory', 0):.0f} MB\n\n"
+                f"[blue]Performance:[/blue]\n"
+                f"  Avg Speed: {stats.get('avg_generate_speed', 0):.1f} tok/s\n"
+                f"  Avg CPU: {stats.get('avg_cpu', 0):.1f}%\n\n"
+                f"[magenta]Server:[/magenta] http://{server.host}:{server.port}",
+                title="Chat Complete"
+            ))
+            
+            monitor.stop_collection()
+
+
+def serve_with_verbose_monitor(server, verbose: bool = False, web_monitor: bool = False):
+    """Run server with verbose monitoring.
+    
+    Args:
+        server: LlamaServer instance  
+        verbose: Enable detailed monitoring in terminal
+        web_monitor: Enable web monitoring page
+    """
+    from moxing.enhanced_monitor import EnhancedMonitor
+    import time
+    
+    if not verbose and not web_monitor:
+        while server.is_running():
+            time.sleep(1)
+        return
+    
+    monitor = EnhancedMonitor(server.host, server.port)
+    monitor.fetch_server_info()
+    monitor.start_collection(interval=1.0)
+    
+    if server._process:
+        monitor.set_process(server._process.pid)
+    
+    if web_monitor:
+        console.print()
+        console.print(Panel(
+            f"[green]Web Monitor:[/green] http://{server.host}:{server.port}\n"
+            f"[blue]OpenAI API:[/blue] http://{server.host}:{server.port}/v1\n"
+            f"[dim]The web page shows live metrics and charts[/dim]",
+            title="Web Monitoring Enabled"
+        ))
+    
+    if verbose:
+        console.print()
+        console.print("[blue]Verbose monitoring enabled (refresh: 1s)[/blue]")
+        console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+    
+    try:
+        while server.is_running():
+            snapshot = monitor._collect_snapshot()
+            monitor.history.add(snapshot)
+            stats = monitor.history.get_stats(60)
+            
+            if verbose:
+                model_name = monitor.server_info.model_name[:30] if monitor.server_info.model_name else "Unknown"
+                ctx_len = monitor.server_info.context_length
+                
+                console.print(Panel(
+                    f"[cyan]Model:[/cyan] {model_name}\n"
+                    f"[cyan]Context:[/cyan] {ctx_len:,}\n\n"
+                    f"[green]Tokens:[/green]\n"
+                    f"  Prompt: {snapshot.prompt_tokens:,}\n"
+                    f"  Generated: {snapshot.generated_tokens:,}\n"
+                    f"  Total: {snapshot.total_tokens:,}\n\n"
+                    f"[yellow]Speed:[/yellow]\n"
+                    f"  Prompt: {snapshot.prompt_speed:.1f} tok/s\n"
+                    f"  Generate: {snapshot.generate_speed:.1f} tok/s\n"
+                    f"  Avg (60s): {stats.get('avg_generate_speed', 0):.1f} tok/s\n\n"
+                    f"[blue]Memory:[/blue]\n"
+                    f"  GPU: {snapshot.gpu_memory_mb:.0f} MB (avg: {stats.get('avg_gpu_memory', 0):.0f})\n"
+                    f"  RAM: {snapshot.ram_used_mb/1024:.2f} GB\n\n"
+                    f"[magenta]CPU:[/magenta] {snapshot.cpu_percent:.1f}% (avg: {stats.get('avg_cpu', 0):.1f}%)\n\n"
+                    f"[dim]Requests: {snapshot.requests_processing} processing, {snapshot.requests_deferred} deferred[/dim]",
+                    title=f"🚀 MoXing Monitor - {model_name}"
+                ))
+            
+            time.sleep(1)
+            
+    except KeyboardInterrupt:
+        pass
+    
+    monitor.stop_collection()
+    
+    if server._process:
+        monitor.set_process(server._process.pid)
+    
+    console.print()
+    console.print("[blue]Verbose monitoring enabled (refresh: 1s)[/blue]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]\n")
+    
+    try:
+        while server.is_running():
+            snapshot = monitor._collect_snapshot()
+            monitor.history.add(snapshot)
+            stats = monitor.history.get_stats(60)
+            
+            model_name = monitor.server_info.model_name[:30] if monitor.server_info.model_name else "Unknown"
+            ctx_len = monitor.server_info.context_length
+            
+            console.print(Panel(
+                f"[cyan]Model:[/cyan] {model_name}\n"
+                f"[cyan]Context:[/cyan] {ctx_len:,}\n\n"
+                f"[green]Tokens:[/green]\n"
+                f"  Prompt: {snapshot.prompt_tokens:,}\n"
+                f"  Generated: {snapshot.generated_tokens:,}\n"
+                f"  Total: {snapshot.total_tokens:,}\n\n"
+                f"[yellow]Speed:[/yellow]\n"
+                f"  Prompt: {snapshot.prompt_speed:.1f} tok/s\n"
+                f"  Generate: {snapshot.generate_speed:.1f} tok/s\n"
+                f"  Avg (60s): {stats.get('avg_generate_speed', 0):.1f} tok/s\n\n"
+                f"[blue]Memory:[/blue]\n"
+                f"  GPU: {snapshot.gpu_memory_mb:.0f} MB (avg: {stats.get('avg_gpu_memory', 0):.0f})\n"
+                f"  RAM: {snapshot.ram_used_mb/1024:.2f} GB\n\n"
+                f"[magenta]CPU:[/magenta] {snapshot.cpu_percent:.1f}% (avg: {stats.get('avg_cpu', 0):.1f}%)\n\n"
+                f"[dim]Requests: {snapshot.requests_processing} processing, {snapshot.requests_deferred} deferred[/dim]",
+                title=f"🚀 MoXing Monitor - {model_name}"
+            ))
+            
+            time.sleep(1)
+            
+    except KeyboardInterrupt:
+        pass
+    
+    monitor.stop_collection()
+
+
 ollama_app = typer.Typer(name="ollama", help="Manage Ollama models")
 app.add_typer(ollama_app, name="ollama")
 
@@ -1219,7 +1568,8 @@ def ollama_serve(
     device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu"),
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, cuda, rocm, vulkan, metal, mlx, mps, cpu"),
     auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port if default is in use"),
-    verbose: bool = typer.Option(False, "-v", "--verbose", help="Verbose output"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed monitoring in terminal"),
+    web_monitor: bool = typer.Option(False, "-w", "--web", help="Enable web monitoring page"),
     skip_check: bool = typer.Option(False, "--skip-check", help="Skip compatibility check"),
     kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q4_0, tq4, tq3.5, tq3, tq2.5, tq2"),
     cpu_offload: int = typer.Option(0, "--cpu-offload", help="Number of layers to offload to CPU (0=auto)"),
@@ -1257,8 +1607,10 @@ def ollama_serve(
         moxing ollama serve omnicoder-9b --cpu-offload 10
         moxing ollama serve model --prompt-offload
         moxing ollama serve gemma3:1b -c 65536 --kv-cache q4_0
+        moxing ollama serve omnicoder-9b -v    # Verbose monitoring
+        moxing ollama serve omnicoder-9b -w    # Web monitoring
     """
-    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, skip_check, kv_cache, cpu_offload, prompt_offload, rope_scaling, rope_scale)
+    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor, skip_check, kv_cache, cpu_offload, prompt_offload, rope_scaling, rope_scale)
 
 
 def serve_with_ollama_backend(
@@ -1334,6 +1686,7 @@ def ollama_serve_impl(
     backend: str = "auto",
     auto_port: bool = False,
     verbose: bool = False,
+    web_monitor: bool = False,
     skip_check: bool = False,
     kv_cache: str = "auto",
     cpu_offload: int = 0,
@@ -1659,8 +2012,7 @@ def ollama_serve_impl(
                 console.print(f"  • Or download a compatible GGUF from Hugging Face")
             raise typer.Exit(1)
         
-        while server.is_running():
-            time.sleep(1)
+        serve_with_verbose_monitor(server, verbose=verbose, web_monitor=web_monitor)
             
     except KeyboardInterrupt:
         console.print("\n[yellow]Shutting down...[/yellow]")
@@ -2012,28 +2364,105 @@ def ollama_info(
 @ollama_app.command("run")
 def ollama_run(
     model: str = typer.Argument(..., help="Ollama model name"),
-    prompt: str = typer.Option("Hello!", "-p", "--prompt", help="Prompt to send"),
+    prompt: str = typer.Option(None, "-p", "--prompt", help="Single prompt (leave empty for interactive chat)"),
+    tokens: int = typer.Option(256, "-n", "--tokens", help="Max tokens to generate"),
+    ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed monitoring and statistics"),
+    backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, vulkan, cuda, metal, cpu"),
+    kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q4_0, tq4, tq3.5, tq3, tq2.5, tq2"),
+    device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu"),
 ):
-    """Quick run an Ollama model."""
-    from moxing.ollama import OllamaClient
+    """Run an Ollama model with detailed monitoring support.
+    
+    Examples:
+        moxing ollama run carstenuhlig/omnicoder-9b           # Interactive chat
+        moxing ollama run carstenuhlig/omnicoder-9b -p "Hello" # Single prompt
+        moxing ollama run omnicoder-9b -v                      # Verbose monitoring
+        moxing ollama run omnicoder-9b -v -c 65536             # Large context + verbose
+        moxing ollama run omnicoder-9b --kv-cache tq2 -v       # TurboQuant + verbose
+    """
+    from moxing.server import find_available_port, LlamaServer
+    from moxing.ollama import get_ollama_model, OllamaClient
+    from moxing.device import DeviceDetector, BackendType
+    
+    ollama_model = get_ollama_model(model)
+    if not ollama_model:
+        console.print(f"[red]Model not found: {model}[/red]")
+        console.print("[dim]Run 'moxing ollama list' to see available models[/dim]")
+        raise typer.Exit(1)
     
     client = OllamaClient()
+    is_accessible, gguf_path, message = client.check_model_access(model)
     
-    if not client.is_available():
-        console.print("[red]Ollama is not running![/red]")
+    if not is_accessible:
+        console.print(f"[red]Cannot access model: {message}[/red]")
         raise typer.Exit(1)
     
-    console.print(f"[blue]Running {model}...[/blue]\n")
+    port = find_available_port(8080)
     
-    import subprocess
-    result = subprocess.run(
-        ["ollama", "run", model, prompt],
-        capture_output=False
-    )
+    detector = DeviceDetector()
+    detector.detect()
     
-    if result.returncode != 0:
-        console.print(f"[red]Failed to run model[/red]")
+    if device != "auto":
+        device_config = detector.get_device_config_by_name(device, backend, ollama_model.size_gb)
+    else:
+        device_config = detector.get_best_device(ollama_model.size_gb)
+    
+    device_str = "auto"
+    if device_config.device.backend != BackendType.CPU:
+        if device_config.backend == BackendType.METAL:
+            device_str = f"MTL{device_config.device.index}"
+        elif device_config.backend == BackendType.CUDA:
+            device_str = f"CUDA{device_config.device.index}"
+        else:
+            device_str = "auto"
+    
+    console.print(Panel(
+        f"[cyan]Model:[/cyan] {ollama_model.full_name}\n"
+        f"[cyan]Size:[/cyan] {ollama_model.size_gb:.1f} GB\n"
+        f"[cyan]Context:[/cyan] {ctx_size}\n"
+        f"[cyan]Backend:[/cyan] {device_config.backend.value}\n"
+        f"[cyan]Device:[/cyan] {device_config.device.name}\n"
+        f"[cyan]KV Cache:[/cyan] {kv_cache}",
+        title="Configuration"
+    ))
+    
+    server = None
+    try:
+        server = LlamaServer(
+            model=str(gguf_path),
+            host="127.0.0.1",
+            port=port,
+            ctx_size=ctx_size,
+            n_gpu_layers=device_config.n_gpu_layers,
+            device=device_str,
+            gpu_backend=device_config.backend.value,
+            kv_cache_quant=kv_cache,
+        )
+        
+        console.print("[blue]Starting server...[/blue]")
+        server.start(wait=True)
+        
+        console.print("[green]Server ready![/green]")
+        
+        run_with_verbose_monitor(
+            server=server,
+            model_name=ollama_model.full_name,
+            prompt=prompt,
+            max_tokens=tokens,
+            verbose=verbose
+        )
+        
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Shutting down...[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
         raise typer.Exit(1)
+    finally:
+        if server:
+            server.stop()
 
 
 compress_app = typer.Typer(name="compress", help="GGUF compression commands")
@@ -2420,6 +2849,147 @@ def turboquant_test(
         f"[magenta]Unbiased: {'✓ Yes' if abs(mean_bias) < 0.05 else '✗ No'}[/magenta]",
         title="TurboQuant Test Results"
     ))
+
+
+monitor_app = typer.Typer(name="monitor", help="Real-time monitoring commands")
+app.add_typer(monitor_app, name="monitor")
+
+
+@monitor_app.command("start")
+def monitor_start(
+    host: str = typer.Option("127.0.0.1", "--host", help="Monitor server host"),
+    port: int = typer.Option(9090, "-p", "--port", help="Monitor server port"),
+    llama_port: int = typer.Option(8080, "-l", "--llama-port", help="llama.cpp server port"),
+):
+    """Start the web-based monitoring dashboard.
+    
+    Displays real-time metrics including:
+    - GPU/CPU memory usage
+    - Token generation speed
+    - Request statistics
+    - Slot status
+    
+    Example:
+        # Terminal 1: Start llama.cpp server
+        moxing serve model.gguf -p 8080
+        
+        # Terminal 2: Start monitor
+        moxing monitor start --llama-port 8080
+        
+        # Open browser: http://127.0.0.1:9090
+    """
+    from moxing.monitor import start_monitor_server
+    
+    console.print(Panel(
+        f"[bold cyan]MoXing Monitor Dashboard[/bold cyan]\n\n"
+        f"[green]Monitor URL:[/green] http://{host}:{port}\n"
+        f"[green]Server URL:[/green] http://127.0.0.1:{llama_port}\n\n"
+        f"[yellow]Make sure llama.cpp server is running![/yellow]\n"
+        f"[dim]Start with: moxing serve model.gguf -p {llama_port}[/dim]",
+        title="Starting Monitor"
+    ))
+    
+    start_monitor_server(host, port, llama_port)
+
+
+@monitor_app.command("cli")
+def monitor_cli(
+    host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
+    port: int = typer.Option(8080, "-p", "--port", help="Server port"),
+):
+    """Show live metrics in terminal.
+    
+    Displays real-time statistics in the terminal.
+    
+    Example:
+        moxing monitor cli --port 8080
+    """
+    from moxing.monitor import print_live_metrics
+    
+    print_live_metrics(host, port)
+
+
+@monitor_app.command("open")
+def monitor_open(
+    port: int = typer.Option(8080, "-p", "--port", help="llama.cpp server port"),
+):
+    """Open the built-in monitoring page.
+    
+    Opens the monitoring page in your browser.
+    Requires llama.cpp server running with --metrics enabled.
+    
+    Example:
+        moxing monitor open --port 8080
+    """
+    import webbrowser
+    
+    url = f"http://127.0.0.1:{port}"
+    
+    console.print(f"[blue]Opening browser: {url}[/blue]")
+    console.print("[dim]Note: llama.cpp server must be running with --metrics enabled[/dim]")
+    
+    webbrowser.open(url)
+
+
+@monitor_app.command("stats")
+def monitor_stats(
+    host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
+    port: int = typer.Option(8080, "-p", "--port", help="Server port"),
+):
+    """Show current server statistics.
+    
+    Example:
+        moxing monitor stats --port 8080
+    """
+    from moxing.monitor import MetricsCollector
+    
+    collector = MetricsCollector(host, port)
+    metrics = collector.fetch_metrics()
+    slots = collector.fetch_slots()
+    props = collector.fetch_props()
+    
+    if props:
+        model_name = Path(props.get("model_path", "Unknown")).name
+        console.print(Panel(
+            f"[cyan]Model:[/cyan] {model_name}\n"
+            f"[cyan]Context:[/cyan] {props.get('n_ctx', '--')}\n"
+            f"[cyan]Batch:[/cyan] {props.get('n_batch', '--')}",
+            title="Model Info"
+        ))
+    
+    if metrics:
+        table = Table(title="Server Statistics")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="green")
+        
+        table.add_row("Prompt Tokens", f"{metrics.prompt_tokens_total:,}")
+        table.add_row("Generated Tokens", f"{metrics.tokens_predicted_total:,}")
+        table.add_row("Total Tokens", f"{metrics.prompt_tokens_total + metrics.tokens_predicted_total:,}")
+        table.add_row("Prompt Speed", f"{metrics.prompt_tokens_per_second:.1f} tok/s")
+        table.add_row("Generate Speed", f"{metrics.predicted_tokens_per_second:.1f} tok/s")
+        table.add_row("Processing", str(metrics.requests_processing))
+        table.add_row("Deferred", str(metrics.requests_deferred))
+        
+        console.print(table)
+    
+    if slots:
+        slots_table = Table(title="Slots")
+        slots_table.add_column("ID", style="cyan")
+        slots_table.add_column("Status", style="green")
+        slots_table.add_column("Context", style="yellow")
+        
+        for slot in slots:
+            status = "[green]Processing[/green]" if slot.get("is_processing") else "[dim]Idle[/dim]"
+            slots_table.add_row(
+                str(slot.get("id", "?")),
+                status,
+                str(slot.get("n_ctx", "--"))
+            )
+        
+        console.print(slots_table)
+    
+    if not metrics and not slots:
+        console.print(f"[red]Failed to connect to server at {host}:{port}[/red]")
 
 
 if __name__ == "__main__":
