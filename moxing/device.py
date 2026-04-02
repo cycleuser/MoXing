@@ -1097,25 +1097,40 @@ def calculate_optimal_context(
     available_vram_gb: float,
     ctx_size_requested: int = 0,
     vram_buffer_ratio: float = 0.15,
+    kv_cache_bits: int = 16,
 ) -> tuple:
-    """Calculate optimal context size based on available VRAM."""
+    """Calculate optimal context size based on available VRAM.
+    
+    Args:
+        model_size_gb: Model size in GB
+        available_vram_gb: Available VRAM in GB
+        ctx_size_requested: Requested context size (0 = auto)
+        vram_buffer_ratio: Buffer ratio for VRAM (default 0.15)
+        kv_cache_bits: KV cache bits per element (16=f16, 8=q8_0, 4=q4_0)
+    
+    Returns:
+        tuple: (ctx_size, n_gpu_layers, cpu_offload_layers, notes)
+    """
     notes = []
     
     usable_vram_gb = available_vram_gb * (1 - vram_buffer_ratio)
     
-    kv_cache_per_1k_ctx_gb = 0.002
+    # KV cache memory per 1K context depends on quantization
+    # F16: ~2MB per 1K ctx, Q4_0: ~0.5MB per 1K ctx (4x less)
+    kv_cache_per_1k_ctx_gb = 0.002 * (kv_cache_bits / 16.0)
     
     if model_size_gb >= usable_vram_gb:
         notes.append(f"Model ({model_size_gb:.1f}GB) exceeds usable VRAM ({usable_vram_gb:.1f}GB)")
         notes.append("Using CPU offloading for some layers")
         
         max_ctx_for_vram = int((usable_vram_gb * 0.3) / kv_cache_per_1k_ctx_gb) * 1024
-        max_ctx = max(2048, min(max_ctx_for_vram, 16384))
+        # No hard limit - user knows best when using KV cache quantization
+        max_ctx = max(2048, max_ctx_for_vram)
         
         if ctx_size_requested > 0:
             ctx = min(ctx_size_requested, max_ctx)
         else:
-            ctx = max_ctx
+            ctx = min(max_ctx, 16384)  # Default cap for auto mode
         
         notes.append(f"Context limited to {ctx}")
         return ctx, -1, 0, "; ".join(notes)
@@ -1124,8 +1139,11 @@ def calculate_optimal_context(
     
     max_ctx_for_vram = int(remaining_vram_gb / kv_cache_per_1k_ctx_gb) * 1024
     
+    # Default context based on remaining VRAM
     default_ctx = 4096
-    if remaining_vram_gb >= 4:
+    if remaining_vram_gb >= 8:
+        default_ctx = 32768
+    elif remaining_vram_gb >= 4:
         default_ctx = 16384
     elif remaining_vram_gb >= 2:
         default_ctx = 8192
@@ -1134,6 +1152,7 @@ def calculate_optimal_context(
     else:
         default_ctx = 2048
     
+    # Respect user's requested context size
     if ctx_size_requested > 0:
         if ctx_size_requested > max_ctx_for_vram:
             ctx = max_ctx_for_vram
@@ -1142,7 +1161,7 @@ def calculate_optimal_context(
             ctx = ctx_size_requested
             notes.append(f"Using requested context size: {ctx}")
     else:
-        ctx = default_ctx
+        ctx = min(default_ctx, max_ctx_for_vram)
         notes.append(f"Auto-detected context size: {ctx}")
     
     notes.append(f"Model: {model_size_gb:.1f}GB, Free VRAM: {remaining_vram_gb:.1f}GB")
