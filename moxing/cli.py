@@ -1181,6 +1181,7 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
     from moxing.enhanced_monitor import EnhancedMonitor
     import time
     import threading
+    import sys
     
     client = Client(server.base_url)
     
@@ -1188,18 +1189,17 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
         messages = [{"role": "user", "content": prompt}]
         
         console.print(f"\n[bold blue]Prompt:[/bold blue] {prompt}\n")
+        
+        if verbose:
+            snapshot = _collect_system_stats()
+            if snapshot:
+                console.print(f"[dim]📊 GPU: {snapshot['gpu_mb']:.0f} MB | RAM: {snapshot['ram_gb']:.2f} GB | CPU: {snapshot['cpu']:.1f}%[/dim]\n")
+        
         console.print("[bold green]Response:[/bold green]")
         
         start_time = time.time()
         first_token_time = None
         token_count = 0
-        last_print_time = start_time
-        
-        monitor = None
-        if verbose:
-            monitor = EnhancedMonitor(server.host, server.port)
-            if server._process:
-                monitor.set_process(server._process.pid)
         
         response = client.chat.completions.create(
             model="llama",
@@ -1219,15 +1219,12 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
                     full_response += content
                     token_count += 1
                     print(content, end="", flush=True)
-                    
-                    if verbose and monitor and (time.time() - last_print_time > 1.0):
-                        last_print_time = time.time()
         
         total_time = time.time() - start_time
         print()
         
-        if verbose and monitor:
-            snapshot = monitor._collect_snapshot()
+        if verbose:
+            snapshot = _collect_system_stats()
             speed = token_count / total_time if total_time > 0 else 0
             ttft = first_token_time - start_time if first_token_time else 0
             
@@ -1238,9 +1235,9 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
                 f"[green]Time:[/green] {total_time:.2f}s | "
                 f"[green]Speed:[/green] {speed:.1f} tok/s | "
                 f"[green]TTFT:[/green] {ttft:.2f}s\n\n"
-                f"[yellow]Memory:[/yellow] GPU: {snapshot.gpu_memory_mb:.0f} MB | "
-                f"RAM: {snapshot.ram_used_mb/1024:.2f} GB\n"
-                f"[blue]CPU:[/blue] {snapshot.cpu_percent:.1f}%",
+                f"[yellow]Memory:[/yellow] GPU: {snapshot['gpu_mb']:.0f} MB | "
+                f"RAM: {snapshot['ram_gb']:.2f} GB\n"
+                f"[blue]CPU:[/blue] {snapshot['cpu']:.1f}%",
                 title="Summary"
             ))
         
@@ -1251,18 +1248,12 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
         
         messages = []
         
-        monitor = None
-        if verbose:
-            monitor = EnhancedMonitor(server.host, server.port)
-            if server._process:
-                monitor.set_process(server._process.pid)
-        
         while True:
             try:
-                if verbose and monitor:
-                    snapshot = monitor._collect_snapshot()
-                    console.print()
-                    console.print(f"[dim]📊 GPU: {snapshot.gpu_memory_mb:.0f} MB | RAM: {snapshot.ram_used_mb/1024:.2f} GB | CPU: {snapshot.cpu_percent:.1f}%[/dim]")
+                if verbose:
+                    snapshot = _collect_system_stats()
+                    if snapshot:
+                        console.print(f"[dim]📊 GPU: {snapshot['gpu_mb']:.0f} MB | RAM: {snapshot['ram_gb']:.2f} GB | CPU: {snapshot['cpu']:.1f}%[/dim]")
                 
                 user_input = Prompt.ask("\n[bold blue]You[/bold blue]")
                 
@@ -1311,24 +1302,30 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
             except KeyboardInterrupt:
                 break
         
-        if verbose and monitor:
-            stats = monitor.history.get_stats(60) if monitor.history.history else {}
-            total_prompt = sum(1 for m in messages if m.get("role") == "user")
-            total_response = sum(1 for m in messages if m.get("role") == "assistant")
+        if verbose:
+            total_prompts = sum(1 for m in messages if m.get("role") == "user")
+            total_responses = sum(1 for m in messages if m.get("role") == "assistant")
             
             console.print()
             console.print(Panel(
                 f"[bold cyan]📊 Session Summary[/bold cyan]\n\n"
-                f"[green]Messages:[/green] {total_prompt} prompts, {total_response} responses\n\n"
-                f"[yellow]Memory:[/yellow]\n"
-                f"  Avg GPU: {stats.get('avg_gpu_memory', 0):.0f} MB\n"
-                f"  Max GPU: {stats.get('max_gpu_memory', 0):.0f} MB\n\n"
-                f"[blue]Performance:[/blue]\n"
-                f"  Avg Speed: {stats.get('avg_generate_speed', 0):.1f} tok/s\n"
-                f"  Avg CPU: {stats.get('avg_cpu', 0):.1f}%\n\n"
+                f"[green]Messages:[/green] {total_prompts} prompts, {total_responses} responses\n\n"
                 f"[magenta]Server:[/magenta] http://{server.host}:{server.port}",
                 title="Chat Complete"
             ))
+
+
+def _collect_system_stats():
+    """Collect system statistics."""
+    try:
+        import psutil
+        return {
+            'cpu': psutil.cpu_percent(interval=0.1),
+            'ram_gb': psutil.virtual_memory().used / (1024**3),
+            'gpu_mb': 0
+        }
+    except:
+        return None
 
 
 def serve_with_verbose_monitor(server, verbose: bool = False, web_monitor: bool = False):
@@ -2412,12 +2409,13 @@ def ollama_run(
             device=device_str,
             gpu_backend=device_config.backend.value,
             kv_cache_quant=kv_cache,
+            quiet=True
         )
         
-        console.print("[blue]Starting server...[/blue]")
+        console.print("[blue]Loading model...[/blue]")
         server.start(wait=True)
         
-        console.print("[green]Server ready![/green]")
+        console.print("[green]Model loaded![/green]")
         
         run_with_verbose_monitor(
             server=server,

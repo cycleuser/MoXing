@@ -105,6 +105,7 @@ class LlamaServer:
         cpu_offload: bool = False,
         cpu_offload_layers: int = 0,
         prompt_offload: bool = False,
+        quiet: bool = False,
         **kwargs
     ):
         model_path = Path(model)
@@ -130,6 +131,7 @@ class LlamaServer:
         self.cpu_offload = cpu_offload
         self.cpu_offload_layers = cpu_offload_layers
         self.prompt_offload = prompt_offload
+        self.quiet = quiet
         self.extra_args = kwargs
         
         self.ctx_size = ctx_size if ctx_size > 0 else 4096
@@ -336,20 +338,22 @@ class LlamaServer:
             raise RuntimeError(f"Binary not found: {binary_path}")
         
         args = self._build_args()
-        console.print(f"[blue]Starting llama-server...[/blue]")
-        console.print(f"[dim]Binary: {binary_path}[/dim]")
-        console.print(f"[dim]Command: {' '.join(args)}[/dim]")
-        console.print(f"[dim]Working dir: {binary_path.parent}[/dim]")
-        console.print(f"[dim]Model: {self.model}[/dim]")
-        console.print(f"[dim]Backend: {self.gpu_backend}[/dim]")
         
-        if self.cpu_offload_layers > 0:
-            console.print(f"[dim]GPU layers: {self.n_gpu_layers if self.n_gpu_layers > 0 else 'all'}, CPU offload: {self.cpu_offload_layers}[/dim]")
-        else:
-            gpu_layers_str = str(self.n_gpu_layers) if self.n_gpu_layers >= 0 else "all"
-            console.print(f"[dim]GPU layers: {gpu_layers_str}[/dim]")
-        
-        console.print(f"[dim]Context: {self.ctx_size}[/dim]")
+        if not self.quiet:
+            console.print(f"[blue]Starting llama-server...[/blue]")
+            console.print(f"[dim]Binary: {binary_path}[/dim]")
+            console.print(f"[dim]Command: {' '.join(args)}[/dim]")
+            console.print(f"[dim]Working dir: {binary_path.parent}[/dim]")
+            console.print(f"[dim]Model: {self.model}[/dim]")
+            console.print(f"[dim]Backend: {self.gpu_backend}[/dim]")
+            
+            if self.cpu_offload_layers > 0:
+                console.print(f"[dim]GPU layers: {self.n_gpu_layers if self.n_gpu_layers > 0 else 'all'}, CPU offload: {self.cpu_offload_layers}[/dim]")
+            else:
+                gpu_layers_str = str(self.n_gpu_layers) if self.n_gpu_layers >= 0 else "all"
+                console.print(f"[dim]GPU layers: {gpu_layers_str}[/dim]")
+            
+            console.print(f"[dim]Context: {self.ctx_size}[/dim]")
         
         env = os.environ.copy()
         
