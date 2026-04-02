@@ -1179,41 +1179,27 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
     """
     from moxing.client import Client
     from moxing.enhanced_monitor import EnhancedMonitor
-    from rich.live import Live
-    from rich.layout import Layout
-    from rich.text import Text
     import time
     import threading
-    
-    monitor = None
-    if verbose:
-        monitor = EnhancedMonitor(server.host, server.port)
-        monitor.fetch_server_info()
-        monitor.start_collection(interval=1.0)
-        if server._process:
-            monitor.set_process(server._process.pid)
     
     client = Client(server.base_url)
     
     if prompt:
         messages = [{"role": "user", "content": prompt}]
         
+        console.print(f"\n[bold blue]Prompt:[/bold blue] {prompt}\n")
+        console.print("[bold green]Response:[/bold green]")
+        
         start_time = time.time()
         first_token_time = None
         token_count = 0
+        last_print_time = start_time
         
-        console.print(f"\n[bold blue]Prompt:[/bold blue] {prompt}\n")
-        
-        if verbose and monitor:
-            snapshot = monitor._collect_snapshot()
-            monitor.history.add(snapshot)
-            
-            console.print(Panel(
-                f"[dim]GPU: {snapshot.gpu_memory_mb:.0f} MB | RAM: {snapshot.ram_used_mb/1024:.2f} GB | CPU: {snapshot.cpu_percent:.1f}%[/dim]",
-                title="📊 Resources"
-            ))
-        
-        console.print("[bold green]Response:[/bold green]")
+        monitor = None
+        if verbose:
+            monitor = EnhancedMonitor(server.host, server.port)
+            if server._process:
+                monitor.set_process(server._process.pid)
         
         response = client.chat.completions.create(
             model="llama",
@@ -1223,8 +1209,6 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
         )
         
         full_response = ""
-        last_stats_time = time.time()
-        
         for chunk in response:
             if isinstance(chunk, dict) and chunk.get("choices"):
                 delta = chunk["choices"][0].get("delta", {})
@@ -1236,17 +1220,14 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
                     token_count += 1
                     print(content, end="", flush=True)
                     
-                    if verbose and monitor and (time.time() - last_stats_time > 0.5):
-                        last_stats_time = time.time()
+                    if verbose and monitor and (time.time() - last_print_time > 1.0):
+                        last_print_time = time.time()
         
         total_time = time.time() - start_time
         print()
         
         if verbose and monitor:
             snapshot = monitor._collect_snapshot()
-            monitor.history.add(snapshot)
-            stats = monitor.history.get_stats(60)
-            
             speed = token_count / total_time if total_time > 0 else 0
             ttft = first_token_time - start_time if first_token_time else 0
             
@@ -1259,12 +1240,9 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
                 f"[green]TTFT:[/green] {ttft:.2f}s\n\n"
                 f"[yellow]Memory:[/yellow] GPU: {snapshot.gpu_memory_mb:.0f} MB | "
                 f"RAM: {snapshot.ram_used_mb/1024:.2f} GB\n"
-                f"[blue]CPU:[/blue] {snapshot.cpu_percent:.1f}% | "
-                f"[blue]Avg Speed (60s):[/blue] {stats.get('avg_generate_speed', 0):.1f} tok/s",
+                f"[blue]CPU:[/blue] {snapshot.cpu_percent:.1f}%",
                 title="Summary"
             ))
-            
-            monitor.stop_collection()
         
         return full_response
     else:
@@ -1273,20 +1251,18 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
         
         messages = []
         
+        monitor = None
+        if verbose:
+            monitor = EnhancedMonitor(server.host, server.port)
+            if server._process:
+                monitor.set_process(server._process.pid)
+        
         while True:
             try:
                 if verbose and monitor:
                     snapshot = monitor._collect_snapshot()
-                    monitor.history.add(snapshot)
-                    stats = monitor.history.get_stats(60)
-                    
                     console.print()
-                    console.print(Panel(
-                        f"[dim]GPU: {snapshot.gpu_memory_mb:.0f} MB (avg: {stats.get('avg_gpu_memory', 0):.0f}) | "
-                        f"RAM: {snapshot.ram_used_mb/1024:.2f} GB | "
-                        f"CPU: {snapshot.cpu_percent:.1f}% (avg: {stats.get('avg_cpu', 0):.1f}%)[/dim]",
-                        title="📊 Live Monitor"
-                    ))
+                    console.print(f"[dim]📊 GPU: {snapshot.gpu_memory_mb:.0f} MB | RAM: {snapshot.ram_used_mb/1024:.2f} GB | CPU: {snapshot.cpu_percent:.1f}%[/dim]")
                 
                 user_input = Prompt.ask("\n[bold blue]You[/bold blue]")
                 
@@ -1336,7 +1312,7 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
                 break
         
         if verbose and monitor:
-            stats = monitor.history.get_stats(60)
+            stats = monitor.history.get_stats(60) if monitor.history.history else {}
             total_prompt = sum(1 for m in messages if m.get("role") == "user")
             total_response = sum(1 for m in messages if m.get("role") == "assistant")
             
@@ -1353,8 +1329,6 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
                 f"[magenta]Server:[/magenta] http://{server.host}:{server.port}",
                 title="Chat Complete"
             ))
-            
-            monitor.stop_collection()
 
 
 def serve_with_verbose_monitor(server, verbose: bool = False, web_monitor: bool = False):
