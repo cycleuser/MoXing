@@ -1,21 +1,39 @@
 """
 TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate
 
-Based on Google's TurboQuant paper (arXiv:2504.19874):
+Based on Google's TurboQuant paper (arXiv:2504.19874v1):
+https://arxiv.org/html/2504.19874v1
+
+Key Features:
 - Data-oblivious online quantization
 - Near-optimal distortion (within 2.7x of theoretical lower bound)
-- MSE and Inner-product optimal variants
-- 3.5 bits per channel for quality neutrality
-- 2.5 bits per channel for marginal quality degradation
+- Two modes: MSE-optimal and Inner-product-optimal (unbiased)
+- Mixed precision: 3.5 bits (quality neutral), 2.5 bits (marginal loss)
+- 5x+ compression ratio
 
-Reference: https://arxiv.org/html/2504.19874v1
+Algorithm Overview:
+1. TurboQuant_MSE (optimize for MSE):
+   - Random rotation to induce Beta distribution on coordinates
+   - Optimal scalar quantization per coordinate (Lloyd-Max)
+   - Distortion: D_mse ≈ 0.36, 0.117, 0.03, 0.009 for b=1,2,3,4
+
+2. TurboQuant_PROD (optimize for inner product, UNBIASED):
+   - Two-stage: (b-1) bits MSE quantizer + 1 bit QJL on residual
+   - Provides unbiased inner product estimation
+   - Distortion: D_prod ≈ 1.57/d, 0.56/d, 0.18/d, 0.047/d for b=1,2,3,4
+
+3. Mixed Precision:
+   - 3.5 bits: 32 outlier channels @ 4bits + 96 normal @ 3bits
+   - 2.5 bits: 32 outlier channels @ 3bits + 96 normal @ 2bits
 """
 
 import math
 import numpy as np
-from typing import Optional, Tuple, List, Literal
-from dataclasses import dataclass
+from typing import Optional, Tuple, List, Dict, Any, Union
+from dataclasses import dataclass, field
 from enum import Enum
+from scipy.special import gamma as gamma_func
+from scipy.integrate import quad
 
 
 class TurboQuantMode(Enum):
@@ -30,60 +48,137 @@ class TurboQuantConfig:
     mode: TurboQuantMode = TurboQuantMode.INNER_PRODUCT
     use_rotation: bool = True
     seed: Optional[int] = None
+    n_outlier_channels: int = 32
+    outlier_threshold: float = 0.99
+
+
+class BetaDistribution:
+    """
+    Beta distribution for coordinates after random rotation.
+    
+    After random rotation, each coordinate follows:
+    f_X(x) = Γ(d/2) / (sqrt(π) * Γ((d-1)/2)) * (1 - x²)^((d-3)/2)
+    
+    In high dimensions, this converges to N(0, 1/d).
+    """
+    
+    def __init__(self, dim: int):
+        self.dim = dim
+        self.scale = 1.0 / math.sqrt(dim)
+        self._normal_approx = dim >= 64
+        
+    def pdf(self, x: float) -> float:
+        """Probability density function."""
+        if abs(x) > 1:
+            return 0.0
+        
+        if self._normal_approx:
+            return (1.0 / (self.scale * math.sqrt(2 * math.pi))) * \
+                   math.exp(-0.5 * (x / self.scale) ** 2)
+        
+        d = self.dim
+        coef = gamma_func(d / 2) / (math.sqrt(math.pi) * gamma_func((d - 1) / 2))
+        return coef * ((1 - x * x) ** ((d - 3) / 2))
+    
+    def sample(self, n: int) -> np.ndarray:
+        """Sample from the distribution."""
+        if self._normal_approx:
+            return np.random.randn(n) * self.scale
+        else:
+            theta = np.random.uniform(0, 2 * math.pi, n)
+            phi = np.random.uniform(0, math.pi, n)
+            x = np.sin(phi) * np.cos(theta)
+            return x
 
 
 class LloydMaxQuantizer:
-    """Optimal scalar quantizer for Beta/Normal distribution using Lloyd-Max algorithm.
+    """
+    Optimal scalar quantizer for Beta distribution using Lloyd-Max algorithm.
     
-    For high-dimensional vectors after random rotation, each coordinate follows
-    a Beta distribution that converges to N(0, 1/d). This class computes and
-    stores optimal scalar quantizers for this distribution.
+    Solves the continuous k-means problem:
+    min_{c_1,...,c_{2^b}} sum_i ∫_{boundary} |x - c_i|² * f_X(x) dx
+    
+    Precomputed optimal centroids for b=1,2,3,4 based on Normal approximation.
     """
     
-    _codebooks_cache: dict = {}
+    _codebook_cache: Dict[Tuple[int, int], np.ndarray] = {}
+    _boundary_cache: Dict[Tuple[int, int], np.ndarray] = {}
     
-    @staticmethod
-    def get_codebook(dim: int, bits: int) -> np.ndarray:
-        """Get optimal codebook centroids for given dimension and bit-width.
-        
-        For Beta distribution converging to N(0, 1/d), the optimal centroids are:
-        - b=1: {±sqrt(2/(pi*d))}
-        - b=2: {±0.453/sqrt(d), ±1.51/sqrt(d)}
-        - b>2: computed via Lloyd-Max iterations
-        """
+    OPTIMAL_CENTROIDS = {
+        1: [0.7979],  # sqrt(2/π)
+        2: [0.453, 1.51],
+        3: [0.267, 0.803, 1.49, 2.32],
+        4: [0.153, 0.453, 0.803, 1.22, 1.67, 2.17, 2.75, 3.44],
+    }
+    
+    MSE_DISTORTION = {
+        1: 0.36,
+        2: 0.117,
+        3: 0.03,
+        4: 0.009,
+    }
+    
+    PROD_DISTORTION = {
+        1: 1.57,
+        2: 0.56,
+        3: 0.18,
+        4: 0.047,
+    }
+    
+    @classmethod
+    def get_codebook(cls, dim: int, bits: int) -> np.ndarray:
+        """Get optimal codebook for given dimension and bit-width."""
         cache_key = (dim, bits)
-        if cache_key in LloydMaxQuantizer._codebooks_cache:
-            return LloydMaxQuantizer._codebooks_cache[cache_key]
         
-        n_levels = 2 ** bits
+        if cache_key in cls._codebook_cache:
+            return cls._codebook_cache[cache_key]
+        
         scale = 1.0 / math.sqrt(dim)
         
-        if bits == 1:
-            centroids = np.array([-scale * math.sqrt(2 / math.pi), 
-                                  scale * math.sqrt(2 / math.pi)])
-        elif bits == 2:
-            centroids = np.array([-scale * 1.51, -scale * 0.453,
-                                   scale * 0.453, scale * 1.51])
+        if bits in cls.OPTIMAL_CENTROIDS:
+            centroids = cls.OPTIMAL_CENTROIDS[bits]
+            codebook = []
+            for c in centroids:
+                codebook.extend([-c * scale, c * scale])
+            codebook = np.array(sorted(codebook), dtype=np.float32)
         else:
-            centroids = LloydMaxQuantizer._compute_optimal_centroids(
-                dim, bits, scale
-            )
+            codebook = cls._compute_codebook_lloyd_max(dim, bits)
         
-        LloydMaxQuantizer._codebooks_cache[cache_key] = centroids
-        return centroids
+        cls._codebook_cache[cache_key] = codebook
+        return codebook
     
-    @staticmethod
-    def _compute_optimal_centroids(dim: int, bits: int, scale: float, 
-                                   n_iter: int = 50) -> np.ndarray:
-        """Compute optimal centroids using Lloyd-Max algorithm.
+    @classmethod
+    def get_boundaries(cls, dim: int, bits: int) -> np.ndarray:
+        """Get quantization boundaries for given dimension and bit-width."""
+        cache_key = (dim, bits)
         
-        For high-dim Beta distribution, we use Normal N(0, 1/d) approximation
-        for which optimal Lloyd-Max centroids are well known.
-        """
+        if cache_key in cls._boundary_cache:
+            return cls._boundary_cache[cache_key]
+        
+        codebook = cls.get_codebook(dim, bits)
+        n_levels = len(codebook)
+        
+        boundaries = np.zeros(n_levels + 1, dtype=np.float32)
+        boundaries[0] = -np.inf
+        boundaries[-1] = np.inf
+        
+        for i in range(1, n_levels):
+            boundaries[i] = (codebook[i-1] + codebook[i]) / 2
+        
+        cls._boundary_cache[cache_key] = boundaries
+        return boundaries
+    
+    @classmethod
+    def _compute_codebook_lloyd_max(cls, dim: int, bits: int, 
+                                     n_iter: int = 100) -> np.ndarray:
+        """Compute optimal codebook using Lloyd-Max iterations."""
         n_levels = 2 ** bits
+        scale = 1.0 / math.sqrt(dim)
+        std = 1.0
         
-        std = scale * math.sqrt(dim)
-        initial_centroids = np.linspace(-3 * std, 3 * std, n_levels) / math.sqrt(dim)
+        centroids = np.linspace(-3 * std, 3 * std, n_levels) * scale
+        
+        beta_dist = BetaDistribution(dim)
         
         for _ in range(n_iter):
             boundaries = np.zeros(n_levels + 1)
@@ -91,52 +186,68 @@ class LloydMaxQuantizer:
             boundaries[-1] = np.inf
             
             for i in range(1, n_levels):
-                boundaries[i] = (initial_centroids[i-1] + initial_centroids[i]) / 2
+                boundaries[i] = (centroids[i-1] + centroids[i]) / 2
             
             new_centroids = np.zeros(n_levels)
-            x_vals = np.linspace(-4 * scale, 4 * scale, 10000)
             
             for i in range(n_levels):
-                mask = (x_vals >= boundaries[i]) & (x_vals < boundaries[i+1])
-                if np.any(mask):
-                    new_centroids[i] = np.mean(x_vals[mask])
+                lower = boundaries[i]
+                upper = boundaries[i + 1]
+                
+                def weighted_x(x):
+                    return x * beta_dist.pdf(x)
+                
+                def weight(x):
+                    return beta_dist.pdf(x)
+                
+                numerator, _ = quad(weighted_x, lower, upper, limit=100)
+                denominator, _ = quad(weight, lower, upper, limit=100)
+                
+                if denominator > 1e-10:
+                    new_centroids[i] = numerator / denominator
                 else:
-                    new_centroids[i] = initial_centroids[i]
+                    new_centroids[i] = centroids[i]
             
-            if np.max(np.abs(new_centroids - initial_centroids)) < 1e-6:
+            if np.max(np.abs(new_centroids - centroids)) < 1e-8:
                 break
-            initial_centroids = new_centroids
+            
+            centroids = new_centroids
         
-        return initial_centroids
+        return centroids.astype(np.float32)
     
-    @staticmethod
-    def quantize_scalar(x: float, codebook: np.ndarray) -> Tuple[int, float]:
-        """Quantize a scalar value to nearest codebook entry."""
-        distances = np.abs(codebook - x)
-        idx = np.argmin(distances)
-        return idx, codebook[idx]
-    
-    @staticmethod
-    def quantize_array(arr: np.ndarray, codebook: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Quantize numpy array using codebook."""
-        indices = np.zeros(len(arr), dtype=np.int32)
-        reconstructed = np.zeros(len(arr), dtype=np.float32)
+    @classmethod
+    def quantize(cls, x: np.ndarray, codebook: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Quantize array to nearest codebook entries."""
+        x_flat = x.flatten()
+        indices = np.zeros(len(x_flat), dtype=np.int32)
+        reconstructed = np.zeros(len(x_flat), dtype=np.float32)
         
-        for i, x in enumerate(arr):
-            distances = np.abs(codebook - x)
+        for i, val in enumerate(x_flat):
+            distances = np.abs(codebook - val)
             idx = np.argmin(distances)
             indices[i] = idx
             reconstructed[i] = codebook[idx]
         
-        return indices, reconstructed
+        return indices.reshape(x.shape), reconstructed.reshape(x.shape)
+    
+    @classmethod
+    def dequantize(cls, indices: np.ndarray, codebook: np.ndarray) -> np.ndarray:
+        """Dequantize indices back to values."""
+        return codebook[indices]
 
 
 class QJLQuantizer:
-    """Quantized Johnson-Lindenstrauss transform for 1-bit inner product quantization.
+    """
+    Quantized Johnson-Lindenstrauss transform for 1-bit inner product quantization.
     
-    Provides unbiased inner product estimation with minimal distortion.
-    QJL map: Q_qjl(x) = sign(S @ x)
-    QJL inverse: Q_qjl^{-1}(z) = sqrt(pi/2)/d * S^T @ z
+    Provides UNBIASED inner product estimation:
+    E[⟨y, QJL⁻¹(QJL(x))⟩] = ⟨y, x⟩
+    
+    Algorithm:
+    - Quantize: Q_qjl(x) = sign(S @ x)  where S ~ N(0, I)
+    - Dequantize: Q_qjl⁻¹(z) = sqrt(π/2)/d * Sᵀ @ z
+    
+    Variance bound: Var ≤ π/(2d) * ||y||²
     """
     
     def __init__(self, dim: int, seed: Optional[int] = None):
@@ -144,16 +255,37 @@ class QJLQuantizer:
         self.seed = seed or np.random.randint(0, 2**31)
         
         rng = np.random.RandomState(self.seed)
-        self.S = rng.randn(dim, dim).astype(np.float32)
+        self.S = rng.randn(dim, dim).astype(np.float32) / np.sqrt(dim)
     
     def quantize(self, x: np.ndarray) -> np.ndarray:
-        """Apply QJL quantization: sign(S @ x)."""
-        return np.sign(self.S @ x).astype(np.int8)
+        """Quantize to binary signs: sign(S @ x)."""
+        if x.ndim == 1:
+            projected = self.S @ x
+        else:
+            projected = x @ self.S.T
+        
+        return np.sign(projected).astype(np.int8)
     
-    def dequantize(self, z: np.ndarray) -> np.ndarray:
-        """Apply QJL dequantization: sqrt(pi/2)/d * S^T @ z."""
-        scale = math.sqrt(math.pi / 2) / self.dim
-        return scale * (self.S.T @ z)
+    def dequantize(self, z: np.ndarray, scale: float = 1.0) -> np.ndarray:
+        """Dequantize: sqrt(π/2)/d * scale * Sᵀ @ z."""
+        deq_scale = math.sqrt(math.pi / 2) / self.dim * scale
+        
+        if z.ndim == 1:
+            return deq_scale * (self.S.T @ z)
+        else:
+            return deq_scale * (z @ self.S)
+    
+    def inner_product(self, z1: np.ndarray, z2: np.ndarray, 
+                      scale1: float = 1.0, scale2: float = 1.0) -> float:
+        """Estimate inner product from quantized vectors."""
+        if z1.ndim == 1:
+            hamming = np.sum(z1 != z2)
+            cos_theta = 1 - 2 * hamming / self.dim
+        else:
+            hamming = np.sum(z1 != z2, axis=1)
+            cos_theta = 1 - 2 * hamming / self.dim
+        
+        return scale1 * scale2 * cos_theta * math.pi / 2
 
 
 class TurboQuant:
@@ -162,42 +294,30 @@ class TurboQuant:
     
     Two operating modes:
     1. MSE mode: Minimizes reconstruction MSE
-    2. Inner-product mode: Provides unbiased inner product estimates (for attention)
+       - Random rotation + Lloyd-Max scalar quantization
+       - D_mse ≤ sqrt(3)π/2 * 4^(-b)
     
-    Key features:
-    - Random rotation to induce Beta distribution on coordinates
-    - Optimal scalar quantization per coordinate (Lloyd-Max)
-    - Two-stage design for inner-product mode (MSE + QJL residual)
-    - 3.5 bits per channel achieves quality neutrality
-    - 2.5 bits per channel for marginal quality degradation
+    2. Inner-product mode: Unbiased inner product estimation
+       - Two-stage: (b-1) bits MSE + 1 bit QJL residual
+       - E[⟨y, x̂⟩] = ⟨y, x⟩ (unbiased!)
+       - D_prod ≤ sqrt(3)π²/d * ||y||² * 4^(-b)
     
-    Paper: arXiv:2504.19874v1
+    Mixed precision support:
+    - 3.5 bits: 32 outlier channels @ 4bits + 96 normal @ 3bits (quality neutral)
+    - 2.5 bits: 32 outlier channels @ 3bits + 96 normal @ 2bits (marginal loss)
     """
     
     def __init__(self, config: Optional[TurboQuantConfig] = None):
         self.config = config or TurboQuantConfig()
         self.dim = self.config.dim
-        self.bits = self._compute_bits()
+        self.bits = self.config.bits_per_channel
         
         self.rotation_matrix: Optional[np.ndarray] = None
-        self.codebook: Optional[np.ndarray] = None
+        self.codebook_mse: Optional[np.ndarray] = None
+        self.codebook_residual: Optional[np.ndarray] = None
         self.qjl: Optional[QJLQuantizer] = None
         
         self._initialized = False
-    
-    def _compute_bits(self) -> int:
-        """Convert bits per channel to integer bit-width for quantization."""
-        bpc = self.config.bits_per_channel
-        if bpc <= 1.5:
-            return 1
-        elif bpc <= 2.5:
-            return 2
-        elif bpc <= 3.5:
-            return 3
-        elif bpc <= 4.5:
-            return 4
-        else:
-            return int(math.ceil(bpc))
     
     def _generate_rotation_matrix(self) -> np.ndarray:
         """Generate random orthogonal matrix via QR decomposition."""
@@ -207,58 +327,58 @@ class TurboQuant:
         random_matrix = rng.randn(self.dim, self.dim).astype(np.float32)
         q, r = np.linalg.qr(random_matrix)
         
-        diag_signs = np.diag(r)
-        if diag_signs.size > 0:
-            flip = np.where(diag_signs < 0)
-            if len(flip) > 0 and len(flip[0]) > 0:
-                q[:, flip[0]] *= -1
+        d = np.diag(r)
+        q[:, d < 0] *= -1
         
         return q
     
-    def _apply_rotation(self, x: np.ndarray) -> np.ndarray:
-        """Apply rotation transform."""
-        if self.rotation_matrix is None:
-            return x
-        return x @ self.rotation_matrix.T
-    
-    def _apply_inverse_rotation(self, x: np.ndarray) -> np.ndarray:
-        """Apply inverse rotation transform."""
-        if self.rotation_matrix is None:
-            return x
-        return x @ self.rotation_matrix
+    def _get_mse_bits(self, total_bits: float) -> int:
+        """Get MSE bit-width for inner-product mode (b-1 bits)."""
+        if self.config.mode == TurboQuantMode.INNER_PRODUCT:
+            return max(1, int(total_bits) - 1)
+        return int(total_bits)
     
     def fit(self):
-        """Initialize TurboQuant with precomputed codebooks."""
+        """Initialize TurboQuant with rotation matrix and codebooks."""
         if self.config.use_rotation:
             self.rotation_matrix = self._generate_rotation_matrix()
         
-        mse_bits = self._compute_mse_bits()
-        self.codebook = LloydMaxQuantizer.get_codebook(self.dim, mse_bits)
-        
         if self.config.mode == TurboQuantMode.INNER_PRODUCT:
+            mse_bits = self._get_mse_bits(self.bits)
+            self.codebook_mse = LloydMaxQuantizer.get_codebook(self.dim, mse_bits)
             self.qjl = QJLQuantizer(self.dim, self.config.seed)
+        else:
+            self.codebook_mse = LloydMaxQuantizer.get_codebook(self.dim, int(self.bits))
         
         self._initialized = True
     
-    def _compute_mse_bits(self) -> int:
-        """Compute MSE bit-width for inner-product mode.
-        
-        Inner-product mode uses (b-1) bits for MSE quantizer and 1 bit for QJL.
-        """
-        if self.config.mode == TurboQuantMode.INNER_PRODUCT:
-            return max(1, self.bits - 1)
-        return self.bits
+    def _rotate(self, x: np.ndarray) -> np.ndarray:
+        """Apply random rotation."""
+        if self.rotation_matrix is None:
+            return x
+        if x.ndim == 1:
+            return self.rotation_matrix @ x
+        return x @ self.rotation_matrix.T
     
-    def quantize(self, x: np.ndarray, norms: Optional[np.ndarray] = None) -> dict:
+    def _inverse_rotate(self, x: np.ndarray) -> np.ndarray:
+        """Apply inverse rotation."""
+        if self.rotation_matrix is None:
+            return x
+        if x.ndim == 1:
+            return self.rotation_matrix.T @ x
+        return x @ self.rotation_matrix
+    
+    def quantize(self, x: np.ndarray, 
+                 norms: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
         Quantize vectors using TurboQuant.
         
         Args:
-            x: Input array of shape (n_vectors, dim) or (dim,)
-            norms: L2 norms for rescaling (for non-unit vectors)
+            x: Input vectors, shape (n, dim) or (dim,)
+            norms: Optional L2 norms for rescaling
         
         Returns:
-            Dictionary containing quantized representation
+            Dictionary with quantized representation
         """
         if not self._initialized:
             self.fit()
@@ -273,104 +393,79 @@ class TurboQuant:
         
         if norms is None:
             norms = np.linalg.norm(x, axis=1, keepdims=True)
+        elif norms.ndim == 1:
+            norms = norms.reshape(-1, 1)
         
-        x_normalized = x / (norms + 1e-8)
+        x_normalized = x / (norms + 1e-10)
         
         if self.config.use_rotation:
-            x_rotated = self._apply_rotation(x_normalized)
+            x_rotated = self._rotate(x_normalized)
         else:
-            x_rotated = x_normalized
+            x_rotated = x_normalized.copy()
         
         if self.config.mode == TurboQuantMode.MSE:
-            return self._quantize_mse(x_rotated, norms, original_shape, is_1d)
+            result = self._quantize_mse(x_rotated, norms)
         else:
-            return self._quantize_inner_product(x_rotated, norms, original_shape, is_1d)
+            result = self._quantize_inner_product(x_rotated, norms)
+        
+        result['original_shape'] = original_shape
+        result['is_1d'] = is_1d
+        
+        return result
     
-    def _quantize_mse(self, x_rotated: np.ndarray, norms: np.ndarray,
-                      original_shape: Tuple, is_1d: bool) -> dict:
-        """Quantize using MSE-optimal TurboQuant."""
-        indices = np.zeros((x_rotated.shape[0], self.dim), dtype=np.int8)
-        reconstructed = np.zeros_like(x_rotated)
-        
-        for i in range(x_rotated.shape[0]):
-            for j in range(self.dim):
-                idx, val = LloydMaxQuantizer.quantize_scalar(x_rotated[i, j], self.codebook)
-                indices[i, j] = idx
-                reconstructed[i, j] = val
-        
-        reconstructed = reconstructed * norms
-        
-        if self.config.use_rotation:
-            reconstructed = self._apply_inverse_rotation(reconstructed)
-        
-        if is_1d:
-            reconstructed = reconstructed[0]
-            indices = indices[0]
-            norms = norms[0] if norms.ndim > 1 else norms[0, 0]
+    def _quantize_mse(self, x_rotated: np.ndarray, 
+                      norms: np.ndarray) -> Dict[str, Any]:
+        """MSE-optimal quantization."""
+        indices, reconstructed = LloydMaxQuantizer.quantize(
+            x_rotated, self.codebook_mse
+        )
         
         return {
             'indices': indices,
-            'norms': norms,
+            'norms': norms.flatten(),
             'mode': 'mse',
-            'original_shape': original_shape,
-            'dim': self.dim,
-            'bits': self.bits,
+            'bits': int(self.bits),
             'use_rotation': self.config.use_rotation,
         }
     
-    def _quantize_inner_product(self, x_rotated: np.ndarray, norms: np.ndarray,
-                                 original_shape: Tuple, is_1d: bool) -> dict:
-        """Quantize using Inner-product optimal TurboQuant (MSE + QJL residual)."""
-        indices = np.zeros((x_rotated.shape[0], self.dim), dtype=np.int8)
-        qjl_signs = np.zeros((x_rotated.shape[0], self.dim), dtype=np.int8)
-        residuals_norm = np.zeros(x_rotated.shape[0], dtype=np.float32)
+    def _quantize_inner_product(self, x_rotated: np.ndarray,
+                                 norms: np.ndarray) -> Dict[str, Any]:
+        """Inner-product-optimal quantization (UNBIASED)."""
+        n_vectors = x_rotated.shape[0]
         
-        for i in range(x_rotated.shape[0]):
-            residual = x_rotated[i].copy()
+        mse_bits = self._get_mse_bits(self.bits)
+        n_levels = 2 ** mse_bits
+        
+        indices = np.zeros((n_vectors, self.dim), dtype=np.int32)
+        qjl_signs = np.zeros((n_vectors, self.dim), dtype=np.int8)
+        residual_norms = np.zeros(n_vectors, dtype=np.float32)
+        
+        for i in range(n_vectors):
+            vec = x_rotated[i]
+            idx, reconstructed = LloydMaxQuantizer.quantize(vec, self.codebook_mse)
+            indices[i] = idx
             
-            for j in range(self.dim):
-                idx, val = LloydMaxQuantizer.quantize_scalar(residual[j], self.codebook)
-                indices[i, j] = idx
-                residual[j] -= val
-            
+            residual = vec - reconstructed
             residual_norm = np.linalg.norm(residual)
-            residuals_norm[i] = residual_norm
+            residual_norms[i] = residual_norm
             
             if residual_norm > 1e-8:
                 residual_normalized = residual / residual_norm
                 qjl_signs[i] = self.qjl.quantize(residual_normalized)
         
-        result = {
+        return {
             'indices': indices,
             'qjl_signs': qjl_signs,
-            'norms': norms,
-            'residuals_norm': residuals_norm,
+            'residual_norms': residual_norms,
+            'norms': norms.flatten(),
             'mode': 'inner_product',
-            'original_shape': original_shape,
-            'dim': self.dim,
-            'bits': self.bits,
+            'bits': int(self.bits),
+            'mse_bits': mse_bits,
             'use_rotation': self.config.use_rotation,
         }
-        
-        if is_1d:
-            for key in ['indices', 'qjl_signs', 'residuals_norm']:
-                if result[key].ndim > 1:
-                    result[key] = result[key][0]
-            if result['norms'].ndim > 1:
-                result['norms'] = result['norms'][0]
-        
-        return result
     
-    def dequantize(self, compressed: dict) -> np.ndarray:
-        """
-        Dequantize vectors back to original space.
-        
-        Args:
-            compressed: Dictionary from quantize()
-        
-        Returns:
-            Reconstructed vectors
-        """
+    def dequantize(self, compressed: Dict[str, Any]) -> np.ndarray:
+        """Dequantize vectors back to original space."""
         mode = compressed.get('mode', 'mse')
         
         if mode == 'mse':
@@ -378,174 +473,213 @@ class TurboQuant:
         else:
             return self._dequantize_inner_product(compressed)
     
-    def _dequantize_mse(self, compressed: dict) -> np.ndarray:
+    def _dequantize_mse(self, compressed: Dict[str, Any]) -> np.ndarray:
         """Dequantize MSE-compressed vectors."""
         indices = compressed['indices']
         norms = compressed['norms']
-        original_shape = compressed['original_shape']
         
         if indices.ndim == 1:
             indices = indices.reshape(1, -1)
-            norms = norms.reshape(1, -1) if np.isscalar(norms) or norms.ndim == 1 else norms
         
-        reconstructed = np.zeros((indices.shape[0], self.dim), dtype=np.float32)
+        reconstructed = LloydMaxQuantizer.dequantize(indices, self.codebook_mse)
         
-        for i in range(indices.shape[0]):
-            for j in range(self.dim):
-                idx = indices[i, j]
-                reconstructed[i, j] = self.codebook[idx]
-        
-        reconstructed = reconstructed * norms
+        reconstructed = reconstructed * norms.reshape(-1, 1)
         
         if compressed.get('use_rotation', False):
-            reconstructed = self._apply_inverse_rotation(reconstructed)
+            reconstructed = self._inverse_rotate(reconstructed)
         
-        if len(original_shape) == 1:
+        if compressed.get('is_1d', False):
             reconstructed = reconstructed[0]
         
-        return reconstructed
+        return reconstructed.astype(np.float32)
     
-    def _dequantize_inner_product(self, compressed: dict) -> np.ndarray:
-        """Dequantize inner-product-compressed vectors."""
+    def _dequantize_inner_product(self, compressed: Dict[str, Any]) -> np.ndarray:
+        """Dequantize inner-product-compressed vectors (UNBIASED)."""
         indices = compressed['indices']
         qjl_signs = compressed['qjl_signs']
+        residual_norms = compressed['residual_norms']
         norms = compressed['norms']
-        residuals_norm = compressed['residuals_norm']
-        original_shape = compressed['original_shape']
         
         if indices.ndim == 1:
             indices = indices.reshape(1, -1)
             qjl_signs = qjl_signs.reshape(1, -1)
-            residuals_norm = residuals_norm.reshape(1, -1)
-            norms = norms.reshape(1, -1) if np.isscalar(norms) or norms.ndim == 1 else norms
         
-        reconstructed = np.zeros((indices.shape[0], self.dim), dtype=np.float32)
+        n_vectors = indices.shape[0]
+        reconstructed = np.zeros((n_vectors, self.dim), dtype=np.float32)
         
-        for i in range(indices.shape[0]):
-            for j in range(self.dim):
-                idx = indices[i, j]
-                reconstructed[i, j] = self.codebook[idx]
+        for i in range(n_vectors):
+            reconstructed[i] = LloydMaxQuantizer.dequantize(
+                indices[i], self.codebook_mse
+            )
             
-            if residuals_norm[i] > 1e-8:
-                qjl_contribution = self.qjl.dequantize(qjl_signs[i])
-                reconstructed[i] += residuals_norm[i] * qjl_contribution
+            if residual_norms[i] > 1e-8:
+                qjl_contrib = self.qjl.dequantize(qjl_signs[i], residual_norms[i])
+                reconstructed[i] += qjl_contrib
         
-        reconstructed = reconstructed * norms
+        reconstructed = reconstructed * norms.reshape(-1, 1)
         
         if compressed.get('use_rotation', False):
-            reconstructed = self._apply_inverse_rotation(reconstructed)
+            reconstructed = self._inverse_rotate(reconstructed)
         
-        if len(original_shape) == 1:
+        if compressed.get('is_1d', False):
             reconstructed = reconstructed[0]
         
-        return reconstructed
+        return reconstructed.astype(np.float32)
     
     @staticmethod
-    def estimate_compression_ratio(bits_per_channel: float = 3.5) -> float:
-        """Estimate compression ratio for given bits per channel."""
-        original_bits = 16
-        return original_bits / bits_per_channel
-    
-    @staticmethod
-    def estimate_memory_saving(
-        n_layers: int,
-        n_heads: int,
-        head_dim: int,
-        ctx_size: int,
-        bits_per_channel: float = 3.5,
-    ) -> dict:
-        """Estimate memory saving from TurboQuant compression."""
-        f16_size = 2 * n_layers * n_heads * head_dim * ctx_size * 2
-        compressed_size = 2 * n_layers * n_heads * head_dim * ctx_size * bits_per_channel / 8
+    def get_distortion_bounds(bits: int, dim: int = 1) -> Dict[str, float]:
+        """Get theoretical distortion bounds for given bit-width."""
+        mse = LloydMaxQuantizer.MSE_DISTORTION.get(bits, 0.36 / (4 ** (bits - 1)))
+        prod = LloydMaxQuantizer.PROD_DISTORTION.get(bits, 1.57 / (4 ** (bits - 1)))
         
         return {
-            'f16_bytes': f16_size,
-            'compressed_bytes': compressed_size,
-            'savings_percent': (1 - compressed_size / f16_size) * 100,
-            'compression_ratio': f16_size / compressed_size,
+            'mse_upper': mse,
+            'mse_lower': 1.0 / (4 ** bits),
+            'prod_upper': prod / dim if dim > 0 else prod,
+            'prod_lower': 1.0 / (dim * 4 ** bits) if dim > 0 else 1.0 / (4 ** bits),
         }
 
 
-class TurboQuantKVCache:
+class TurboQuantMixedPrecision:
     """
-    TurboQuant for KV Cache compression.
+    Mixed-precision TurboQuant for KV cache compression.
     
-    Provides extreme KV cache compression with minimal quality loss:
-    - 3.5 bits/channel: Quality neutrality
-    - 2.5 bits/channel: Marginal quality degradation
-    - 5x+ overall compression
+    Implements the paper's mixed-precision strategy:
+    - 3.5 bits: 32 outlier channels @ 4bits + 96 normal @ 3bits
+    - 2.5 bits: 32 outlier channels @ 3bits + 96 normal @ 2bits
+    
+    Achieves quality neutrality at 3.5 bits, marginal loss at 2.5 bits.
     """
     
-    def __init__(self, head_dim: int = 128, bits_per_channel: float = 3.5):
-        self.head_dim = head_dim
-        self.bits_per_channel = bits_per_channel
+    def __init__(self, dim: int = 128, bits_per_channel: float = 3.5,
+                 n_outliers: int = 32, seed: Optional[int] = None):
+        self.dim = dim
+        self.bits = bits_per_channel
+        self.n_outliers = n_outliers
+        self.seed = seed
         
-        config = TurboQuantConfig(
-            dim=head_dim,
-            bits_per_channel=bits_per_channel,
+        self._setup_quantizers()
+    
+    def _setup_quantizers(self):
+        """Setup separate quantizers for outlier and normal channels."""
+        if self.bits >= 3.5:
+            outlier_bits = 4
+            normal_bits = 3
+        elif self.bits >= 2.5:
+            outlier_bits = 3
+            normal_bits = 2
+        else:
+            outlier_bits = max(1, int(self.bits))
+            normal_bits = outlier_bits
+        
+        self.outlier_quantizer = TurboQuant(TurboQuantConfig(
+            dim=self.n_outliers,
+            bits_per_channel=outlier_bits,
             mode=TurboQuantMode.INNER_PRODUCT,
+            seed=self.seed,
+        ))
+        
+        self.normal_quantizer = TurboQuant(TurboQuantConfig(
+            dim=self.dim - self.n_outliers,
+            bits_per_channel=normal_bits,
+            mode=TurboQuantMode.INNER_PRODUCT,
+            seed=self.seed + 1 if self.seed else None,
+        ))
+        
+        self.outlier_indices: Optional[np.ndarray] = None
+    
+    def identify_outliers(self, x: np.ndarray) -> np.ndarray:
+        """Identify outlier channels based on magnitude variance."""
+        if x.ndim == 1:
+            x = x.reshape(1, -1)
+        
+        channel_vars = np.var(np.abs(x), axis=0)
+        
+        threshold = np.percentile(channel_vars, 
+                                   100 * (1 - self.n_outliers / self.dim))
+        
+        outlier_mask = channel_vars >= threshold
+        return outlier_mask
+    
+    def quantize(self, x: np.ndarray, 
+                 norms: Optional[np.ndarray] = None) -> Dict[str, Any]:
+        """Quantize with mixed precision."""
+        if self.outlier_indices is None:
+            self.outlier_indices = self.identify_outliers(x)
+        
+        if norms is None:
+            norms = np.linalg.norm(x, axis=1 if x.ndim > 1 else 0, keepdims=True)
+        
+        normal_mask = ~self.outlier_indices
+        
+        x_outliers = x[..., self.outlier_indices]
+        x_normal = x[..., normal_mask]
+        
+        outlier_compressed = self.outlier_quantizer.quantize(x_outliers)
+        normal_compressed = self.normal_quantizer.quantize(x_normal)
+        
+        return {
+            'outlier_compressed': outlier_compressed,
+            'normal_compressed': normal_compressed,
+            'outlier_indices': self.outlier_indices,
+            'norms': norms.flatten() if norms.ndim > 1 else norms,
+            'bits': self.bits,
+            'original_shape': x.shape,
+        }
+    
+    def dequantize(self, compressed: Dict[str, Any]) -> np.ndarray:
+        """Dequantize mixed-precision compressed vectors."""
+        outlier_reconstructed = self.outlier_quantizer.dequantize(
+            compressed['outlier_compressed']
         )
-        self.turboquant = TurboQuant(config)
-    
-    def compress_kv(self, k_cache: np.ndarray, v_cache: np.ndarray) -> Tuple[dict, dict]:
-        """
-        Compress KV cache tensors.
+        normal_reconstructed = self.normal_quantizer.dequantize(
+            compressed['normal_compressed']
+        )
         
-        Args:
-            k_cache: Key cache of shape (batch, heads, seq, head_dim)
-            v_cache: Value cache of shape (batch, heads, seq, head_dim)
+        original_shape = compressed['original_shape']
+        result = np.zeros(original_shape, dtype=np.float32)
         
-        Returns:
-            Tuple of (compressed_k, compressed_v)
-        """
-        self.turboquant.fit()
+        outlier_indices = compressed['outlier_indices']
+        normal_indices = ~outlier_indices
         
-        original_shape = k_cache.shape
+        if result.ndim == 1:
+            result[outlier_indices] = outlier_reconstructed
+            result[normal_indices] = normal_reconstructed
+        else:
+            result[:, outlier_indices] = outlier_reconstructed
+            result[:, normal_indices] = normal_reconstructed
         
-        k_flat = k_cache.reshape(-1, self.head_dim)
-        v_flat = v_cache.reshape(-1, self.head_dim)
-        
-        k_norms = np.linalg.norm(k_flat, axis=1, keepdims=True)
-        v_norms = np.linalg.norm(v_flat, axis=1, keepdims=True)
-        
-        k_compressed = self.turboquant.quantize(k_flat, k_norms)
-        v_compressed = self.turboquant.quantize(v_flat, v_norms)
-        
-        k_compressed['original_shape'] = original_shape
-        v_compressed['original_shape'] = original_shape
-        
-        return k_compressed, v_compressed
-    
-    def decompress_kv(self, k_compressed: dict, v_compressed: dict) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Decompress KV cache tensors.
-        
-        Args:
-            k_compressed: Compressed K cache
-            v_compressed: Compressed V cache
-        
-        Returns:
-            Tuple of (k_cache, v_cache) with original shape
-        """
-        k_reconstructed = self.turboquant.dequantize(k_compressed)
-        v_reconstructed = self.turboquant.dequantize(v_compressed)
-        
-        original_shape = k_compressed['original_shape']
-        
-        return (k_reconstructed.reshape(original_shape),
-                v_reconstructed.reshape(original_shape))
+        return result
 
 
-def benchmark_turboquant():
-    """Benchmark TurboQuant compression."""
-    print("=" * 70)
-    print("TurboQuant KV Cache Compression Benchmark")
-    print("=" * 70)
+def benchmark_turboquant_comprehensive():
+    """Comprehensive TurboQuant benchmark."""
+    print("=" * 80)
+    print("TurboQuant: Complete KV Cache Quantization Analysis")
+    print("=" * 80)
+    
+    print("\n1. Theoretical Distortion Bounds (from paper)")
+    print("-" * 60)
+    print(f"{'Bits':<8} {'MSE Upper':<15} {'MSE Lower':<15} {'Ratio':<10}")
+    print("-" * 60)
+    
+    for b in [1, 2, 3, 4]:
+        bounds = TurboQuant.get_distortion_bounds(b)
+        ratio = bounds['mse_upper'] / bounds['mse_lower']
+        print(f"{b:<8} {bounds['mse_upper']:<15.4f} {bounds['mse_lower']:<15.4f} {ratio:<10.2f}x")
+    
+    print("\nTurboQuant achieves distortion within ~2.7x of theoretical optimum!")
+    print("At b=1, it's within 1.45x - very close to optimal.")
+    
+    print("\n" + "=" * 80)
+    print("2. KV Cache Memory Estimation")
+    print("-" * 80)
     
     configs = [
         ("F16 (baseline)", 16.0),
         ("Q8", 8.0),
         ("Q4", 4.0),
+        ("TurboQuant-4", 4.0),
         ("TurboQuant-3.5", 3.5),
         ("TurboQuant-3", 3.0),
         ("TurboQuant-2.5", 2.5),
@@ -555,56 +689,48 @@ def benchmark_turboquant():
     n_layers = 32
     n_heads = 32
     head_dim = 128
-    ctx_sizes = [4096, 8192, 16384]
+    ctx_sizes = [4096, 8192, 16384, 32768, 65536]
     
-    print("\nKV Cache Size Comparison:")
-    print("-" * 70)
+    print(f"\nModel: {n_layers} layers, {n_heads} heads, {head_dim} dim")
+    print(f"\n{'Config':<20} {'4K':<10} {'16K':<10} {'64K':<10} {'Compression':<12} {'Quality'}")
+    print("-" * 80)
     
-    for ctx in ctx_sizes:
-        print(f"\nContext Size: {ctx:,}")
-        print(f"{'Config':<20} {'Size (GB)':<15} {'Compression':<15} {'Saving':<10} {'Quality'}")
-        print("-" * 70)
+    for name, bits in configs:
+        sizes = []
+        for ctx in ctx_sizes:
+            size_gb = 2 * n_layers * n_heads * head_dim * ctx * bits / 8 / (1024**3)
+            sizes.append(size_gb)
         
-        f16_size = 2 * n_layers * n_heads * head_dim * ctx * 2 / (1024**3)
+        compression = 16.0 / bits
+        quality = "Quality neutral" if bits == 3.5 else \
+                  "Marginal loss" if bits == 2.5 else \
+                  "High quality" if bits >= 4 else \
+                  "Some loss"
         
-        for name, bits in configs:
-            size = 2 * n_layers * n_heads * head_dim * ctx * bits / 8 / (1024**3)
-            compression = f"{f16_size / size:.1f}x"
-            saving = f"{(1 - size/f16_size)*100:.1f}%"
-            
-            if bits == 3.5:
-                quality = "Quality neutral"
-            elif bits == 2.5:
-                quality = "Marginal loss"
-            elif bits == 2.0:
-                quality = "Some loss"
-            elif bits >= 4.0:
-                quality = "High quality"
-            else:
-                quality = ""
-            
-            print(f"{name:<20} {size:<15.3f} {compression:<15} {saving:<10} {quality}")
+        print(f"{name:<20} {sizes[0]:<10.2f} {sizes[2]:<10.2f} {sizes[4]:<10.2f} {compression:<12.1f}x {quality}")
     
-    print("\n" + "=" * 70)
-    print("TurboQuant Key Insights from Paper:")
-    print("- 3.5 bits/channel: Achieves quality neutrality (indistinguishable from F16)")
-    print("- 2.5 bits/channel: Marginal quality degradation")
-    print("- 5x+ compression with near-identical output quality")
-    print("- Random rotation + optimal scalar quantization per coordinate")
-    print("=" * 70)
+    print("\n" + "=" * 80)
+    print("3. Practical Recommendations")
+    print("-" * 80)
+    print("""
+• For quality-critical applications:
+  Use TurboQuant-3.5 (mixed precision: 4-bit outliers + 3-bit normal)
+  - Achieves quality neutrality (indistinguishable from F16)
+  - 4.5x compression
+  
+• For memory-constrained scenarios:
+  Use TurboQuant-2.5 (mixed precision: 3-bit outliers + 2-bit normal)
+  - Marginal quality degradation
+  - 6.4x compression
+  
+• For extreme compression:
+  Use TurboQuant-2 (2-bit uniform)
+  - Acceptable quality loss for many tasks
+  - 8x compression
+""")
     
-    print("\nTheoretical Distortion Bounds (per paper):")
-    print("-" * 50)
-    print(f"{'Bits (b)':<10} {'MSE D_mse':<15} {'Inner-product D_prod':<20}")
-    print("-" * 50)
-    
-    for b in [1, 2, 3, 4]:
-        mse_distortion = [0.36, 0.117, 0.03, 0.009][b-1]
-        prod_distortion = [1.57, 0.56, 0.18, 0.047][b-1]
-        print(f"{b:<10} {mse_distortion:<15.3f} ~{prod_distortion}/d (inner-product)")
-    
-    print("\n" + "=" * 70)
+    print("=" * 80)
 
 
 if __name__ == "__main__":
-    benchmark_turboquant()
+    benchmark_turboquant_comprehensive()

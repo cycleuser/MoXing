@@ -11,6 +11,7 @@ Features:
 - Function calling / tool support
 - Multimodal support
 - GGUF compression and transparent decompression
+- TurboQuant KV cache compression (arXiv:2504.19874)
 
 Quick start:
     from moxing import quick_run, quick_server
@@ -22,9 +23,13 @@ Quick start:
     with quick_server("llama-3.2-3b") as server:
         # Use OpenAI API at http://localhost:8080/v1
         pass
+    
+    # TurboQuant for KV cache compression
+    from moxing import TurboQuant, TurboQuantConfig
+    tq = TurboQuant(TurboQuantConfig(bits_per_channel=3.5))
 """
 
-__version__ = '0.1.24'
+__version__ = '0.1.25'
 
 from moxing.client import Client, ChatCompletion, Message
 from moxing.server import LlamaServer, ServerConfig, GPUInfo
@@ -46,6 +51,15 @@ from moxing.binaries import (
 from moxing.gguf_compress import (
     MultiCompressor, TransparentDecompressor, GGUFSplitter,
     compress_model, resolve_model_path
+)
+from moxing.turboquant import (
+    TurboQuant, TurboQuantConfig, TurboQuantMode,
+    TurboQuantMixedPrecision, LloydMaxQuantizer, QJLQuantizer,
+)
+from moxing.kv_cache import (
+    KVCacheQuantType, KVCacheConfig,
+    estimate_kv_cache_size, estimate_kv_cache_size_gb,
+    recommend_cache_config, get_llama_cpp_cache_args,
 )
 
 GGUFCompressor = MultiCompressor  # Alias for backward compatibility
@@ -98,4 +112,20 @@ __all__ = [
     "GGUFSplitter",
     "compress_model",
     "resolve_model_path",
+    
+    # TurboQuant
+    "TurboQuant",
+    "TurboQuantConfig",
+    "TurboQuantMode",
+    "TurboQuantMixedPrecision",
+    "LloydMaxQuantizer",
+    "QJLQuantizer",
+    
+    # KV Cache
+    "KVCacheQuantType",
+    "KVCacheConfig",
+    "estimate_kv_cache_size",
+    "estimate_kv_cache_size_gb",
+    "recommend_cache_config",
+    "get_llama_cpp_cache_args",
 ]
