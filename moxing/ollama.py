@@ -7,10 +7,11 @@ List and use models from local Ollama installation.
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 from urllib.request import urlopen, Request
 from urllib.error import URLError
@@ -47,6 +48,8 @@ class OllamaModel:
     modified: str
     digest: Optional[str] = None
     family: Optional[str] = None
+    context_length: Optional[int] = None
+    architecture: Optional[str] = None
     
     @property
     def size_gb(self) -> float:
@@ -57,6 +60,81 @@ class OllamaModel:
         if self.tag and self.tag != "latest":
             return f"{self.name}:{self.tag}"
         return self.name
+
+
+def read_gguf_context_length(gguf_path: str) -> Tuple[Optional[int], Optional[str]]:
+    """Read context length and architecture from GGUF file metadata.
+    
+    Args:
+        gguf_path: Path to GGUF file
+        
+    Returns:
+        Tuple of (context_length, architecture) or (None, None) if not found
+    """
+    context_length = None
+    architecture = None
+    
+    try:
+        with open(gguf_path, 'rb') as f:
+            magic = f.read(4)
+            if magic != b'GGUF':
+                return None, None
+            
+            version = struct.unpack('<I', f.read(4))[0]
+            tensor_count = struct.unpack('<Q', f.read(8))[0]
+            metadata_kv_count = struct.unpack('<Q', f.read(8))[0]
+            
+            for _ in range(min(metadata_kv_count, 200)):
+                key_len = struct.unpack('<Q', f.read(8))[0]
+                key = f.read(key_len).decode('utf-8')
+                value_type = struct.unpack('<I', f.read(4))[0]
+                
+                value = None
+                
+                if value_type == 0:
+                    value = struct.unpack('<B', f.read(1))[0]
+                elif value_type == 1:
+                    value = struct.unpack('<b', f.read(1))[0]
+                elif value_type == 2:
+                    value = struct.unpack('<H', f.read(2))[0]
+                elif value_type == 3:
+                    value = struct.unpack('<h', f.read(2))[0]
+                elif value_type == 4:
+                    value = struct.unpack('<I', f.read(4))[0]
+                elif value_type == 5:
+                    value = struct.unpack('<i', f.read(4))[0]
+                elif value_type == 6:
+                    value = struct.unpack('<f', f.read(4))[0]
+                elif value_type == 7:
+                    value = struct.unpack('<?', f.read(1))[0]
+                elif value_type == 8:
+                    str_len = struct.unpack('<Q', f.read(8))[0]
+                    value = f.read(str_len).decode('utf-8', errors='replace')
+                elif value_type == 9:
+                    arr_type = struct.unpack('<I', f.read(4))[0]
+                    arr_len = struct.unpack('<Q', f.read(8))[0]
+                    for _ in range(min(arr_len, 1000)):
+                        if arr_type in [0, 1]:
+                            f.read(1)
+                        elif arr_type in [2, 3]:
+                            f.read(2)
+                        elif arr_type in [4, 5, 6]:
+                            f.read(4)
+                        elif arr_type == 7:
+                            f.read(1)
+                        elif arr_type == 8:
+                            slen = struct.unpack('<Q', f.read(8))[0]
+                            f.read(slen)
+                
+                if 'context_length' in key.lower() and value is not None:
+                    context_length = value
+                if key == 'general.architecture' and value is not None:
+                    architecture = value
+                    
+    except Exception:
+        pass
+    
+    return context_length, architecture
 
 
 class OllamaClient:
@@ -348,7 +426,8 @@ def list_ollama_models() -> List[OllamaModel]:
 
 
 def print_ollama_models(models: Optional[List[OllamaModel]] = None, 
-                        show_embeddings: bool = True):
+                        show_embeddings: bool = True,
+                        show_context: bool = True):
     """Print a table of Ollama models."""
     if models is None:
         models = list_ollama_models()
@@ -365,6 +444,8 @@ def print_ollama_models(models: Optional[List[OllamaModel]] = None,
     table = Table(title=f"Ollama Models ({len(models)} total)")
     table.add_column("Name", style="cyan", no_wrap=True)
     table.add_column("Size", style="green")
+    if show_context:
+        table.add_column("Context", style="magenta")
     table.add_column("Type", style="yellow")
     table.add_column("ID", style="dim")
     
@@ -373,12 +454,38 @@ def print_ollama_models(models: Optional[List[OllamaModel]] = None,
     for m in sorted(models, key=lambda x: x.size, reverse=True):
         is_embed = client.is_embedding_model(m.full_name)
         model_type = "embedding" if is_embed else "llm"
-        table.add_row(
-            m.full_name,
-            f"{m.size_gb:.1f} GB" if m.size_gb >= 1 else f"{m.size / (1024**2):.0f} MB",
-            model_type,
-            m.id[:8] if m.id else "-"
-        )
+        
+        ctx_str = "-"
+        if show_context and not is_embed:
+            is_accessible, gguf_path, _ = client.check_model_access(m.full_name)
+            if is_accessible and gguf_path:
+                try:
+                    ctx_len, arch = read_gguf_context_length(str(gguf_path))
+                    if ctx_len:
+                        if ctx_len >= 1024 * 100:
+                            ctx_str = f"{ctx_len // 1024}K"
+                        elif ctx_len >= 1024:
+                            ctx_str = f"{ctx_len // 1024}K"
+                        else:
+                            ctx_str = str(ctx_len)
+                except:
+                    pass
+        
+        if show_context:
+            table.add_row(
+                m.full_name,
+                f"{m.size_gb:.1f} GB" if m.size_gb >= 1 else f"{m.size / (1024**2):.0f} MB",
+                ctx_str,
+                model_type,
+                m.id[:8] if m.id else "-"
+            )
+        else:
+            table.add_row(
+                m.full_name,
+                f"{m.size_gb:.1f} GB" if m.size_gb >= 1 else f"{m.size / (1024**2):.0f} MB",
+                model_type,
+                m.id[:8] if m.id else "-"
+            )
     
     console.print(table)
 
