@@ -464,31 +464,36 @@ class LlamaServer:
         monitor_thread = threading.Thread(target=monitor, daemon=True)
         monitor_thread.start()
     
-    def _wait_for_server(self, timeout: int = 60):
+    def _wait_for_server(self, timeout: int = 120):
         """Wait for server to be ready."""
         start = time.time()
         
         while time.time() - start < timeout:
             try:
-                resp = httpx.get(f"{self._base_url}/health", timeout=2)
+                resp = httpx.get(f"{self._base_url}/health", timeout=5)
                 if resp.status_code == 200:
                     try:
-                        props = httpx.get(f"{self._base_url}/props", timeout=2)
+                        props = httpx.get(f"{self._base_url}/props", timeout=5)
                         if props.status_code == 200:
                             data = props.json()
                             if data.get("total_slots", 0) > 0:
-                                console.print(f"[green]Server ready at {self._base_url}[/green]")
+                                if not self.quiet:
+                                    console.print(f"[green]Server ready at {self._base_url}[/green]")
                                 return
-                    except:
+                    except Exception as e:
+                        if not self.quiet:
+                            console.print(f"[dim]Waiting for props... {e}[/dim]")
                         pass
-            except:
+            except Exception as e:
+                if not self.quiet:
+                    console.print(f"[dim]Waiting for health... {e}[/dim]")
                 pass
             
             if self._process is not None and self._process.poll() is not None:
                 stdout, stderr = self._process.communicate()
                 raise RuntimeError(f"Server failed to start:\n{stderr}")
                 
-            time.sleep(0.5)
+            time.sleep(1)
             
         raise TimeoutError(f"Server did not start within {timeout} seconds")
     
