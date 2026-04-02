@@ -279,8 +279,10 @@ def get_llama_cpp_cache_args(config: KVCacheConfig) -> List[str]:
         KVCacheQuantType.IQ3_S: "q4_0",
         KVCacheQuantType.Q3_K: "q4_0",
         KVCacheQuantType.Q2_K: "q4_0",
-        KVCacheQuantType.TURBOQUANT_4: "iq4_nl",
+        KVCacheQuantType.TURBOQUANT_35: "q4_0",
+        KVCacheQuantType.TURBOQUANT_4: "q4_0",
         KVCacheQuantType.TURBOQUANT_3: "q4_0",
+        KVCacheQuantType.TURBOQUANT_25: "q4_0",
         KVCacheQuantType.TURBOQUANT_2: "q4_0",
     }
     
@@ -288,8 +290,6 @@ def get_llama_cpp_cache_args(config: KVCacheConfig) -> List[str]:
         cache_type = quant_map[config.quant_type]
         args.extend(["-ctk", cache_type])
         args.extend(["-ctv", cache_type])
-    
-    return args
     
     return args
 
