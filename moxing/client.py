@@ -154,7 +154,8 @@ class ChatCompletions:
                     if data == "[DONE]":
                         break
                     try:
-                        yield json.loads(data)
+                        chunk = json.loads(data)
+                        yield chunk
                     except json.JSONDecodeError:
                         continue
 

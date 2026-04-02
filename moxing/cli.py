@@ -1168,22 +1168,21 @@ def check_model(
 
 
 def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_tokens: int = 256, verbose: bool = False):
-    """Run inference with verbose monitoring display.
-    
-    Args:
-        server: LlamaServer instance
-        model_name: Model name for display
-        prompt: Optional single prompt (if None, enters interactive mode)
-        max_tokens: Maximum tokens to generate
-        verbose: Enable detailed monitoring
-    """
+    """Run inference with verbose monitoring display."""
     from moxing.client import Client
-    from moxing.enhanced_monitor import EnhancedMonitor
     import time
-    import threading
-    import sys
+    import psutil
     
     client = Client(server.base_url)
+    
+    def get_stats():
+        try:
+            return {
+                'cpu': psutil.cpu_percent(interval=0.1),
+                'ram_gb': psutil.virtual_memory().used / (1024**3),
+            }
+        except:
+            return {'cpu': 0, 'ram_gb': 0}
     
     if prompt:
         messages = [{"role": "user", "content": prompt}]
@@ -1191,9 +1190,8 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
         console.print(f"\n[bold blue]Prompt:[/bold blue] {prompt}\n")
         
         if verbose:
-            snapshot = _collect_system_stats()
-            if snapshot:
-                console.print(f"[dim]📊 GPU: {snapshot['gpu_mb']:.0f} MB | RAM: {snapshot['ram_gb']:.2f} GB | CPU: {snapshot['cpu']:.1f}%[/dim]\n")
+            stats = get_stats()
+            console.print(f"[dim]📊 RAM: {stats['ram_gb']:.2f} GB | CPU: {stats['cpu']:.1f}%[/dim]\n")
         
         console.print("[bold green]Response:[/bold green]")
         
@@ -1201,30 +1199,35 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
         first_token_time = None
         token_count = 0
         
-        response = client.chat.completions.create(
-            model="llama",
-            messages=messages,
-            max_tokens=max_tokens,
-            stream=True
-        )
-        
-        full_response = ""
-        for chunk in response:
-            if isinstance(chunk, dict) and chunk.get("choices"):
-                delta = chunk["choices"][0].get("delta", {})
-                content = delta.get("content", "")
-                if content:
-                    if first_token_time is None:
-                        first_token_time = time.time()
-                    full_response += content
-                    token_count += 1
-                    print(content, end="", flush=True)
+        try:
+            response = client.chat.completions.create(
+                model="llama",
+                messages=messages,
+                max_tokens=max_tokens,
+                stream=True
+            )
+            
+            full_response = ""
+            for chunk in response:
+                if isinstance(chunk, dict) and chunk.get("choices"):
+                    delta = chunk["choices"][0].get("delta", {})
+                    # Get content from delta (may be in 'content' or 'reasoning_content')
+                    content = delta.get("content") or delta.get("reasoning_content") or ""
+                    if content:
+                        if first_token_time is None:
+                            first_token_time = time.time()
+                        full_response += content
+                        token_count += 1
+                        print(content, end="", flush=True)
+        except Exception as e:
+            console.print(f"\n[red]Error during generation: {e}[/red]")
+            return ""
         
         total_time = time.time() - start_time
         print()
         
         if verbose:
-            snapshot = _collect_system_stats()
+            stats = get_stats()
             speed = token_count / total_time if total_time > 0 else 0
             ttft = first_token_time - start_time if first_token_time else 0
             
@@ -1235,25 +1238,20 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
                 f"[green]Time:[/green] {total_time:.2f}s | "
                 f"[green]Speed:[/green] {speed:.1f} tok/s | "
                 f"[green]TTFT:[/green] {ttft:.2f}s\n\n"
-                f"[yellow]Memory:[/yellow] GPU: {snapshot['gpu_mb']:.0f} MB | "
-                f"RAM: {snapshot['ram_gb']:.2f} GB\n"
-                f"[blue]CPU:[/blue] {snapshot['cpu']:.1f}%",
+                f"[yellow]Memory:[/yellow] RAM: {stats['ram_gb']:.2f} GB\n"
+                f"[blue]CPU:[/blue] {stats['cpu']:.1f}%",
                 title="Summary"
             ))
         
         return full_response
     else:
-        console.print("[green]Interactive chat ready! Type 'exit' or 'quit' to end.[/green]")
-        console.print("[dim]Ctrl+C to stop[/dim]\n")
-        
         messages = []
         
         while True:
             try:
                 if verbose:
-                    snapshot = _collect_system_stats()
-                    if snapshot:
-                        console.print(f"[dim]📊 GPU: {snapshot['gpu_mb']:.0f} MB | RAM: {snapshot['ram_gb']:.2f} GB | CPU: {snapshot['cpu']:.1f}%[/dim]")
+                    stats = get_stats()
+                    console.print(f"[dim]📊 RAM: {stats['ram_gb']:.2f} GB | CPU: {stats['cpu']:.1f}%[/dim]")
                 
                 user_input = Prompt.ask("\n[bold blue]You[/bold blue]")
                 
@@ -1268,24 +1266,28 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
                 
                 console.print("[bold green]Assistant[/bold green]: ", end="")
                 
-                response = client.chat.completions.create(
-                    model="llama",
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    stream=True
-                )
-                
-                assistant_msg = ""
-                for chunk in response:
-                    if isinstance(chunk, dict) and chunk.get("choices"):
-                        delta = chunk["choices"][0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            if first_token_time is None:
-                                first_token_time = time.time()
-                            assistant_msg += content
-                            token_count += 1
-                            print(content, end="", flush=True)
+                try:
+                    response = client.chat.completions.create(
+                        model="llama",
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        stream=True
+                    )
+                    
+                    assistant_msg = ""
+                    for chunk in response:
+                        if isinstance(chunk, dict) and chunk.get("choices"):
+                            delta = chunk["choices"][0].get("delta", {})
+                            content = delta.get("content") or delta.get("reasoning_content") or ""
+                            if content:
+                                if first_token_time is None:
+                                    first_token_time = time.time()
+                                assistant_msg += content
+                                token_count += 1
+                                print(content, end="", flush=True)
+                except Exception as e:
+                    console.print(f"\n[red]Error: {e}[/red]")
+                    continue
                 
                 print()
                 
@@ -1313,19 +1315,6 @@ def run_with_verbose_monitor(server, model_name: str, prompt: str = None, max_to
                 f"[magenta]Server:[/magenta] http://{server.host}:{server.port}",
                 title="Chat Complete"
             ))
-
-
-def _collect_system_stats():
-    """Collect system statistics."""
-    try:
-        import psutil
-        return {
-            'cpu': psutil.cpu_percent(interval=0.1),
-            'ram_gb': psutil.virtual_memory().used / (1024**3),
-            'gpu_mb': 0
-        }
-    except:
-        return None
 
 
 def serve_with_verbose_monitor(server, verbose: bool = False, web_monitor: bool = False):
@@ -2409,13 +2398,15 @@ def ollama_run(
             device=device_str,
             gpu_backend=device_config.backend.value,
             kv_cache_quant=kv_cache,
-            quiet=True
+            quiet=False
         )
         
         console.print("[blue]Loading model...[/blue]")
         server.start(wait=True)
         
         console.print("[green]Model loaded![/green]")
+        console.print("[green]Interactive chat ready! Type 'exit' or 'quit' to end.[/green]")
+        console.print("[dim]Ctrl+C to stop[/dim]\n")
         
         run_with_verbose_monitor(
             server=server,
