@@ -247,6 +247,7 @@ class LlamaServer:
             "--host", self.host,
             "--port", str(self.port),
             "-c", str(self.ctx_size),
+            "--metrics",
         ]
         
         if self.cpu_offload_layers > 0 and self.n_gpu_layers != 0:
