@@ -1127,8 +1127,17 @@ def ollama_list(
     show_embeddings: bool = typer.Option(True, "--embeddings/--no-embeddings", help="Show embedding models"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
     select: bool = typer.Option(False, "--select", "-s", help="Interactive model selection"),
+    show_context: bool = typer.Option(True, "--context/--no-context", "-C", help="Show context length"),
 ):
-    """List all models from local Ollama installation."""
+    """List all models from local Ollama installation.
+    
+    Shows model name, size, context length, and type.
+    
+    Examples:
+        moxing ollama list
+        moxing ollama list --no-embeddings
+        moxing ollama list --no-context
+    """
     from moxing.ollama import list_ollama_models, print_ollama_models, OllamaClient
     
     models = list_ollama_models()
@@ -1192,7 +1201,7 @@ def ollama_list(
         except ValueError:
             console.print("[red]Invalid input[/red]")
     else:
-        print_ollama_models(models, show_embeddings)
+        print_ollama_models(models, show_embeddings, show_context)
 
 
 @ollama_app.command("serve")
@@ -1200,7 +1209,7 @@ def ollama_serve(
     model: str = typer.Argument(..., help="Ollama model name (e.g., gemma3:4b)"),
     port: int = typer.Option(8080, "-p", "--port", help="Server port (0 for auto)"),
     host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
-    ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size"),
+    ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size (0=auto)"),
     device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu"),
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, cuda, rocm, vulkan, metal, mlx, mps, cpu"),
     auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port if default is in use"),
@@ -1209,6 +1218,8 @@ def ollama_serve(
     kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q4_0, tq3, tq2"),
     cpu_offload: int = typer.Option(0, "--cpu-offload", help="Number of layers to offload to CPU (0=auto)"),
     prompt_offload: bool = typer.Option(False, "--prompt-offload", help="Prompt for CPU offload if needed"),
+    rope_scaling: str = typer.Option("none", "--rope-scaling", help="RoPE scaling: none, linear, yarn (for extending context)"),
+    rope_scale: float = typer.Option(1.0, "--rope-scale", help="RoPE context scaling factor (e.g., 2.0 for 2x context)"),
 ):
     """Serve an Ollama model with OpenAI-compatible API.
     
@@ -1236,11 +1247,12 @@ def ollama_serve(
     Examples:
         moxing ollama serve gemma3:4b
         moxing ollama serve gemma3:4b -b cuda
-        moxing ollama serve omnicoder-9b --kv-cache tq3
+        moxing ollama serve omnicoder-9b --kv-cache q4_0
         moxing ollama serve omnicoder-9b --cpu-offload 10
         moxing ollama serve model --prompt-offload
+        moxing ollama serve gemma3:1b -c 65536 --kv-cache q4_0
     """
-    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, skip_check, kv_cache, cpu_offload, prompt_offload)
+    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, skip_check, kv_cache, cpu_offload, prompt_offload, rope_scaling, rope_scale)
 
 
 def serve_with_ollama_backend(
@@ -1320,6 +1332,8 @@ def ollama_serve_impl(
     kv_cache: str = "auto",
     cpu_offload: int = 0,
     prompt_offload: bool = False,
+    rope_scaling: str = "none",
+    rope_scale: float = 1.0,
 ):
     """Implementation of ollama serve with device/backend selection."""
     from moxing.ollama import OllamaClient, get_ollama_model
@@ -1551,6 +1565,12 @@ def ollama_serve_impl(
     
     server = None
     try:
+        extra_kwargs = {}
+        if rope_scaling != "none":
+            extra_kwargs['rope_scaling'] = rope_scaling
+        if rope_scale != 1.0:
+            extra_kwargs['rope_scale'] = rope_scale
+        
         server = LlamaServer(
             model=str(gguf_path),
             host=host,
@@ -1562,6 +1582,7 @@ def ollama_serve_impl(
             kv_cache_quant=kv_cache,
             cpu_offload=actual_cpu_offload > 0,
             cpu_offload_layers=actual_cpu_offload,
+            **extra_kwargs
         )
         
         console.print(Panel(
@@ -1651,6 +1672,84 @@ def ollama_serve_impl(
         raise typer.Exit(1)
 
 
+def _fast_check_gguf_compatibility(gguf_path: Path):
+    """Quick check GGUF compatibility by reading metadata only.
+    
+    Returns:
+        Tuple of (is_compatible, error_message)
+    """
+    import struct
+    
+    try:
+        with open(gguf_path, 'rb') as f:
+            magic = f.read(4)
+            if magic != b'GGUF':
+                return False, "Not a valid GGUF file"
+            
+            version = struct.unpack('<I', f.read(4))[0]
+            if version < 2 or version > 4:
+                return False, f"Unsupported GGUF version: {version}"
+            
+            tensor_count = struct.unpack('<Q', f.read(8))[0]
+            metadata_kv_count = struct.unpack('<Q', f.read(8))[0]
+            
+            for _ in range(min(metadata_kv_count, 100)):
+                try:
+                    key_len = struct.unpack('<Q', f.read(8))[0]
+                    if key_len > 10000:
+                        return True, None
+                    key = f.read(key_len).decode('utf-8')
+                    value_type = struct.unpack('<I', f.read(4))[0]
+                    
+                    if value_type == 0:
+                        f.read(1)
+                    elif value_type == 1:
+                        f.read(1)
+                    elif value_type == 2:
+                        f.read(2)
+                    elif value_type == 3:
+                        f.read(2)
+                    elif value_type == 4:
+                        f.read(4)
+                    elif value_type == 5:
+                        f.read(4)
+                    elif value_type == 6:
+                        f.read(4)
+                    elif value_type == 7:
+                        f.read(1)
+                    elif value_type == 8:
+                        str_len = struct.unpack('<Q', f.read(8))[0]
+                        if str_len < 1000000:
+                            f.read(str_len)
+                        else:
+                            return True, None
+                    elif value_type == 9:
+                        arr_type = struct.unpack('<I', f.read(4))[0]
+                        arr_len = struct.unpack('<Q', f.read(8))[0]
+                        if arr_len > 100000:
+                            return True, None
+                        for _ in range(min(arr_len, 100)):
+                            if arr_type in [0, 1, 7]:
+                                f.read(1)
+                            elif arr_type in [2, 3]:
+                                f.read(2)
+                            elif arr_type in [4, 5, 6]:
+                                f.read(4)
+                            elif arr_type == 8:
+                                slen = struct.unpack('<Q', f.read(8))[0]
+                                if slen < 100000:
+                                    f.read(slen)
+                                else:
+                                    break
+                except struct.error:
+                    return True, None
+            
+            return True, None
+            
+    except Exception as e:
+        return False, str(e)
+
+
 def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float, verbose: bool = False) -> Optional[Path]:
     """Get a compatible GGUF file, downloading from Hugging Face if Ollama's is incompatible."""
     from moxing.binaries import get_binary_manager
@@ -1658,6 +1757,18 @@ def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float, verbose:
     if verbose:
         console.print(f"[dim]Checking GGUF compatibility for: {model}[/dim]")
         console.print(f"[dim]GGUF path: {ollama_gguf}[/dim]")
+        console.print(f"[dim]GGUF size: {ollama_gguf.stat().st_size / (1024**3):.2f} GB[/dim]")
+    
+    console.print("[blue]Checking GGUF compatibility...[/blue]")
+    
+    is_compatible, error = _fast_check_gguf_compatibility(ollama_gguf)
+    
+    if is_compatible:
+        console.print("[green]GGUF is compatible[/green]")
+        return ollama_gguf
+    
+    if error:
+        console.print(f"[yellow]Warning: {error}[/yellow]")
     
     manager = get_binary_manager()
     if not manager.has_binaries():
@@ -1665,14 +1776,6 @@ def _get_compatible_gguf(model: str, ollama_gguf: Path, size_gb: float, verbose:
         manager.download_binaries()
     
     llama_cli = manager.get_binary_path("llama-cli")
-    
-    if verbose:
-        console.print(f"[dim]Using llama-cli: {llama_cli}[/dim]")
-        console.print(f"[dim]Binary exists: {llama_cli.exists()}[/dim]")
-        console.print(f"[dim]GGUF exists: {ollama_gguf.exists()}[/dim]")
-        console.print(f"[dim]GGUF size: {ollama_gguf.stat().st_size / (1024**3):.2f} GB[/dim]")
-    
-    console.print("[blue]Checking GGUF compatibility...[/blue]")
     
     incompatible_patterns = [
         "error loading model",
