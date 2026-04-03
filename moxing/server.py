@@ -252,16 +252,10 @@ class LlamaServer:
             "--metrics",
         ]
         
-        if self.cpu_offload_layers > 0 and self.n_gpu_layers != 0:
-            if self.n_gpu_layers > 0:
-                gpu_layers = self.n_gpu_layers
-            else:
-                gpu_layers = 99
-            args.extend(["-ngl", str(gpu_layers)])
-            args.extend(["-ts", f"{gpu_layers},{self.cpu_offload_layers}"])
+        if self.n_gpu_layers >= 0:
+            args.extend(["-ngl", str(self.n_gpu_layers)])
         else:
-            ngl_value = str(self.n_gpu_layers) if self.n_gpu_layers >= 0 else "all"
-            args.extend(["-ngl", ngl_value])
+            args.extend(["-ngl", "999"])
         
         if self.device != "auto" and self.device != "CPU" and self.n_gpu_layers != 0:
             args.extend(["-dev", self.device])
@@ -304,10 +298,10 @@ class LlamaServer:
         }
         
         if self.kv_cache_quant == "auto":
-            from moxing.kv_cache import recommend_cache_config, estimate_model_size_gb
+            from moxing.kv_cache import recommend_cache_config, estimate_kv_cache_size_gb
             
             try:
-                model_size_gb = estimate_model_size_gb(str(self.model))
+                model_size_gb = estimate_kv_cache_size_gb(str(self.model))
                 config = recommend_cache_config(
                     model_size_gb=model_size_gb,
                     available_vram_gb=8.0,

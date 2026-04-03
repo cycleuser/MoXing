@@ -797,6 +797,73 @@ def download_binaries(
         raise typer.Exit(1)
 
 
+@app.command("update-binaries")
+def update_binaries_cmd(
+    force: bool = typer.Option(False, "-f", "--force", help="Force update even if up to date"),
+    yes: bool = typer.Option(False, "-y", "--yes", help="Auto-confirm update"),
+):
+    """Update llama.cpp binaries to the latest version.
+    
+    Checks for newer binary versions and downloads them if available.
+    Supports automatic update detection and one-click updates.
+    
+    Examples:
+        moxing update-binaries           # Check and update if needed
+        moxing update-binaries -f        # Force re-download
+        moxing update-binaries -f -y     # Force update without confirmation
+    
+    Note: Uses bundled binaries as fallback if update fails.
+    """
+    from moxing.binaries import get_binary_manager, clear_skip_update
+    
+    console.print("[blue]Checking for binary updates...[/blue]\n")
+    
+    manager = get_binary_manager()
+    clear_skip_update()
+    
+    has_update, current, latest = manager.check_for_updates()
+    
+    if not current:
+        console.print("[yellow]Could not determine current version[/yellow]")
+        console.print("[blue]Proceeding with download...[/blue]\n")
+        has_update = True
+    
+    if has_update or force:
+        if latest:
+            if current:
+                console.print(f"[green bold]New version available![/green bold]")
+                console.print(f"  Current:  {current}")
+                console.print(f"  Latest:   {latest}")
+            else:
+                console.print(f"[green]Latest version: {latest}[/green]")
+        else:
+            console.print("[green]Update available[/green]")
+        
+        if not yes:
+            from rich.prompt import Confirm
+            console.print()
+            if not Confirm.ask("Download update?", default=True):
+                console.print("[yellow]Update cancelled[/yellow]")
+                from moxing.binaries import skip_update_forever
+                skip_update_forever()
+                return
+        
+        console.print(f"\n[blue]Downloading update...[/blue]\n")
+        
+        try:
+            manager.download_binaries(force=True, quiet=False, check_updates=False)
+            console.print(f"\n[green bold]✓ Update complete![/green bold]")
+            console.print(f"[dim]Installed to: {manager.cache_dir}[/dim]")
+            console.print("\n[dim]Tip: Restart any running servers to use new binaries[/dim]")
+        except Exception as e:
+            console.print(f"[red]Update failed: {e}[/red]")
+            console.print("[yellow]Falling back to bundled binaries[/yellow]")
+    else:
+        console.print("[green]✓ Already up to date[/green]")
+        console.print(f"[dim]Current version: {current}[/dim]")
+        console.print("\n[dim]Tip: Use --force to re-download binaries[/dim]")
+
+
 @app.command("clear-cache")
 def clear_cache(
     model: Optional[str] = typer.Argument(None, help="Specific model to remove"),
@@ -1524,7 +1591,7 @@ def ollama_serve(
     model: str = typer.Argument(..., help="Ollama model name (e.g., gemma3:4b)"),
     port: int = typer.Option(8080, "-p", "--port", help="Server port (0 for auto)"),
     host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
-    ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size (0=auto)"),
+    ctx_size: int = typer.Option(32768, "-c", "--ctx-size", help="Context size (0=auto)"),
     device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu"),
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, cuda, rocm, vulkan, metal, mlx, mps, cpu"),
     auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port if default is in use"),
@@ -1536,6 +1603,11 @@ def ollama_serve(
     prompt_offload: bool = typer.Option(False, "--prompt-offload", help="Prompt for CPU offload if needed"),
     rope_scaling: str = typer.Option("none", "--rope-scaling", help="RoPE scaling: none, linear, yarn (for extending context)"),
     rope_scale: float = typer.Option(1.0, "--rope-scale", help="RoPE context scaling factor (e.g., 2.0 for 2x context)"),
+    # Performance options
+    threads: int = typer.Option(0, "-t", "--threads", help="Number of threads (-1=auto)"),
+    batch_size: int = typer.Option(2048, "--batch-size", help="Batch size for prompt processing"),
+    ubatch_size: int = typer.Option(512, "--ubatch-size", help="Physical batch size"),
+    flash_attn: bool = typer.Option(True, "--flash-attn/--no-flash-attn", help="Enable flash attention"),
 ):
     """Serve an Ollama model with OpenAI-compatible API.
     
@@ -1560,6 +1632,12 @@ def ollama_serve(
     - N: Offload N layers to CPU, rest to GPU
     - Use --prompt-offload to be asked before offloading
     
+    Performance Tips:
+    - Default context is 32K (optimized for speed)
+    - Use --flash-attn for faster attention (enabled by default)
+    - Increase --batch-size for better throughput
+    - Use -c 65536 or higher for long documents
+    
     Examples:
         moxing ollama serve gemma3:4b
         moxing ollama serve gemma3:4b -b cuda
@@ -1570,7 +1648,7 @@ def ollama_serve(
         moxing ollama serve omnicoder-9b -v    # Verbose monitoring
         moxing ollama serve omnicoder-9b -w    # Web monitoring
     """
-    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor, skip_check, kv_cache, cpu_offload, prompt_offload, rope_scaling, rope_scale)
+    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor, skip_check, kv_cache, cpu_offload, prompt_offload, rope_scaling, rope_scale, threads, batch_size, ubatch_size, flash_attn)
 
 
 def serve_with_ollama_backend(
@@ -1653,6 +1731,10 @@ def ollama_serve_impl(
     prompt_offload: bool = False,
     rope_scaling: str = "none",
     rope_scale: float = 1.0,
+    threads: int = 0,
+    batch_size: int = 2048,
+    ubatch_size: int = 512,
+    flash_attn: bool = True,
 ):
     """Implementation of ollama serve with device/backend selection."""
     from moxing.ollama import OllamaClient, get_ollama_model
@@ -1889,6 +1971,14 @@ def ollama_serve_impl(
             extra_kwargs['rope_scaling'] = rope_scaling
         if rope_scale != 1.0:
             extra_kwargs['rope_scale'] = rope_scale
+        if threads > 0:
+            extra_kwargs['n_threads'] = threads
+        if batch_size > 0:
+            extra_kwargs['batch_size'] = batch_size
+        if ubatch_size > 0:
+            extra_kwargs['ubatch_size'] = ubatch_size
+        if flash_attn:
+            extra_kwargs['flash_attn'] = 'auto'  # Use 'auto', 'on', or 'off'
         
         server = LlamaServer(
             model=str(gguf_path),
