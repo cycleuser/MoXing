@@ -728,12 +728,26 @@ class BinaryManager:
         moxing_info = get_moxing_binaries_release()
         if moxing_info and moxing_info.llama_cpp_version:
             latest = moxing_info.llama_cpp_version
-            if current != latest:
-                return True, current, latest
+            # Compare build numbers numerically (e.g., b8475 vs b8461)
+            try:
+                current_num = int(current.replace('b', ''))
+                latest_num = int(latest.replace('b', ''))
+                if latest_num > current_num:
+                    return True, current, latest
+            except (ValueError, AttributeError):
+                if current != latest:
+                    return True, current, latest
         
         latest = get_latest_llama_cpp_version()
-        if latest and current != latest:
-            return True, current, latest
+        if latest:
+            try:
+                current_num = int(current.replace('b', ''))
+                latest_num = int(latest.replace('b', ''))
+                if latest_num > current_num:
+                    return True, current, latest
+            except (ValueError, AttributeError):
+                if current != latest:
+                    return True, current, latest
         
         return False, current, latest
     
