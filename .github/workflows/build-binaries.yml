@@ -1,0 +1,407 @@
+name: Build MoXing Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 0.1.26)'
+        required: false
+        default: ''
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    name: Build Linux Binaries
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential cmake git \
+            cuda-toolkit-12-6 \
+            vulkan-sdk libvulkan-dev \
+            rocm-dev hipcc
+      
+      - name: Clone llama.cpp
+        run: |
+          git clone --depth 1 --recursive https://github.com/ggml-org/llama.cpp.git build/llama.cpp
+      
+      - name: Build CUDA
+        run: |
+          cd build/llama.cpp
+          mkdir build-cuda && cd build-cuda
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DLLAMA_BUILD_SERVER=ON
+          cmake --build . --config Release -j$(nproc)
+      
+      - name: Build ROCm
+        run: |
+          cd build/llama.cpp
+          mkdir build-rocm && cd build-rocm
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_HIPBLAS=ON -DLLAMA_BUILD_SERVER=ON
+          cmake --build . --config Release -j$(nproc)
+      
+      - name: Build Vulkan
+        run: |
+          cd build/llama.cpp
+          mkdir build-vulkan && cd build-vulkan
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON
+          cmake --build . --config Release -j$(nproc)
+      
+      - name: Build CPU
+        run: |
+          cd build/llama.cpp
+          mkdir build-cpu && cd build-cpu
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON
+          cmake --build . --config Release -j$(nproc)
+      
+      - name: Copy binaries
+        run: |
+          mkdir -p moxing/bin/linux-x64-{cuda,rocm,vulkan,cpu}
+          
+          # CUDA
+          cp build/llama.cpp/build-cuda/bin/llama-server moxing/bin/linux-x64-cuda/
+          cp build/llama.cpp/build-cuda/bin/llama-cli moxing/bin/linux-x64-cuda/
+          cp build/llama.cpp/build-cuda/bin/llama-bench moxing/bin/linux-x64-cuda/
+          cp build/llama.cpp/build-cuda/libggml*.so* moxing/bin/linux-x64-cuda/
+          cp build/llama.cpp/build-cuda/libllama*.so* moxing/bin/linux-x64-cuda/
+          
+          # ROCm
+          cp build/llama.cpp/build-rocm/bin/llama-server moxing/bin/linux-x64-rocm/
+          cp build/llama.cpp/build-rocm/bin/llama-cli moxing/bin/linux-x64-rocm/
+          cp build/llama.cpp/build-rocm/bin/llama-bench moxing/bin/linux-x64-rocm/
+          cp build/llama.cpp/build-rocm/libggml*.so* moxing/bin/linux-x64-rocm/
+          cp build/llama.cpp/build-rocm/libllama*.so* moxing/bin/linux-x64-rocm/
+          
+          # Vulkan
+          cp build/llama.cpp/build-vulkan/bin/llama-server moxing/bin/linux-x64-vulkan/
+          cp build/llama.cpp/build-vulkan/bin/llama-cli moxing/bin/linux-x64-vulkan/
+          cp build/llama.cpp/build-vulkan/bin/llama-bench moxing/bin/linux-x64-vulkan/
+          cp build/llama.cpp/build-vulkan/libggml*.so* moxing/bin/linux-x64-vulkan/
+          cp build/llama.cpp/build-vulkan/libllama*.so* moxing/bin/linux-x64-vulkan/
+          
+          # CPU
+          cp build/llama.cpp/build-cpu/bin/llama-server moxing/bin/linux-x64-cpu/
+          cp build/llama.cpp/build-cpu/bin/llama-cli moxing/bin/linux-x64-cpu/
+          cp build/llama.cpp/build-cpu/bin/llama-bench moxing/bin/linux-x64-cpu/
+          cp build/llama.cpp/build-cpu/libggml*.so* moxing/bin/linux-x64-cpu/
+          cp build/llama.cpp/build-cpu/libllama*.so* moxing/bin/linux-x64-cpu/
+      
+      - name: Package CUDA v13
+        run: |
+          VERSION=$(python -c "import sys; sys.path.insert(0, '.'); from moxing import __version__; print(__version__)")
+          bash scripts/package_cuda_v13.sh
+      
+      - name: Package ROCm
+        run: |
+          VERSION=$(python -c "import sys; sys.path.insert(0, '.'); from moxing import __version__; print(__version__)")
+          bash scripts/package_rocm.sh
+      
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: |
+            dist/moxing-cuda-v13-*.tar.gz
+            dist/moxing-rocm-*.tar.gz
+          retention-days: 1
+
+  build-windows:
+    runs-on: windows-latest
+    name: Build Windows Binaries
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Setup CUDA
+        uses: Jimver/cuda-toolkit-action@v0.2.11
+        with:
+          cuda: '12.6.0'
+      
+      - name: Setup Vulkan SDK
+        uses: humbletim/setup-vulkan-sdk@v1.1.0
+        with:
+          version: '1.3.261.1'
+      
+      - name: Clone llama.cpp
+        run: |
+          git clone --depth 1 --recursive https://github.com/ggml-org/llama.cpp.git build/llama.cpp
+      
+      - name: Build CUDA
+        run: |
+          cd build/llama.cpp
+          mkdir build-cuda
+          cd build-cuda
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DLLAMA_BUILD_SERVER=ON -G "Visual Studio 17 2022" -A x64
+          cmake --build . --config Release --parallel
+          cmake --install . --config Release --prefix ../install-cuda
+      
+      - name: Build Vulkan
+        run: |
+          cd build/llama.cpp
+          mkdir build-vulkan
+          cd build-vulkan
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -G "Visual Studio 17 2022" -A x64
+          cmake --build . --config Release --parallel
+      
+      - name: Build CPU
+        run: |
+          cd build/llama.cpp
+          mkdir build-cpu
+          cd build-cpu
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON -G "Visual Studio 17 2022" -A x64
+          cmake --build . --config Release --parallel
+      
+      - name: Copy binaries
+        run: |
+          mkdir -p moxing/bin/windows-x64-cuda
+          mkdir -p moxing/bin/windows-x64-vulkan
+          mkdir -p moxing/bin/windows-x64-cpu
+          
+          # CUDA
+          cp build/llama.cpp/build-cuda/bin/Release/llama-server.exe moxing/bin/windows-x64-cuda/
+          cp build/llama.cpp/build-cuda/bin/Release/llama-cli.exe moxing/bin/windows-x64-cuda/
+          cp build/llama.cpp/build-cuda/bin/Release/llama-bench.exe moxing/bin/windows-x64-cuda/
+          cp build/llama.cpp/build-cuda/bin/Release/*.dll moxing/bin/windows-x64-cuda/
+          
+          # Vulkan
+          cp build/llama.cpp/build-vulkan/bin/Release/llama-server.exe moxing/bin/windows-x64-vulkan/
+          cp build/llama.cpp/build-vulkan/bin/Release/llama-cli.exe moxing/bin/windows-x64-vulkan/
+          cp build/llama.cpp/build-vulkan/bin/Release/llama-bench.exe moxing/bin/windows-x64-vulkan/
+          cp build/llama.cpp/build-vulkan/bin/Release/*.dll moxing/bin/windows-x64-vulkan/
+          
+          # CPU
+          cp build/llama.cpp/build-cpu/bin/Release/llama-server.exe moxing/bin/windows-x64-cpu/
+          cp build/llama.cpp/build-cpu/bin/Release/llama-cli.exe moxing/bin/windows-x64-cpu/
+          cp build/llama.cpp/build-cpu/bin/Release/llama-bench.exe moxing/bin/windows-x64-cpu/
+          cp build/llama.cpp/build-cpu/bin/Release/*.dll moxing/bin/windows-x64-cpu/
+      
+      - name: Package Windows CUDA
+        run: |
+          $VERSION = python -c "import sys; sys.path.insert(0, '.'); from moxing import __version__; print(__version__)"
+          $PackageName = "moxing-windows-cuda-$VERSION"
+          
+          mkdir dist/$PackageName/lib/cuda
+          cp moxing/bin/windows-x64-cuda/* dist/$PackageName/lib/cuda/
+          
+          # Create install script
+          @"
+          @echo off
+          echo Installing MoXing Windows CUDA binaries...
+          echo.
+          echo Copying files to C:\moxing\cuda...
+          mkdir C:\moxing\cuda
+          xcopy lib\cuda C:\moxing\cuda /E /I /Y
+          echo.
+          echo Done! Usage: moxing serve model.gguf -b cuda
+          "@ | Out-File -Encoding ASCII dist/$PackageName/install.bat
+          
+          Compress-Archive -Path dist/$PackageName -DestinationPath dist/$PackageName.zip
+          
+          echo "Windows CUDA package created: $PackageName.zip"
+      
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: dist/*.zip
+          retention-days: 1
+
+  build-macos:
+    runs-on: macos-latest
+    name: Build macOS Binaries
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          brew install cmake
+      
+      - name: Clone llama.cpp
+        run: |
+          git clone --depth 1 --recursive https://github.com/ggml-org/llama.cpp.git build/llama.cpp
+      
+      - name: Build Metal
+        run: |
+          cd build/llama.cpp
+          mkdir build-metal
+          cd build-metal
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DLLAMA_BUILD_SERVER=ON
+          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
+      
+      - name: Build CPU
+        run: |
+          cd build/llama.cpp
+          mkdir build-cpu
+          cd build-cpu
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=OFF -DLLAMA_BUILD_SERVER=ON
+          cmake --build . --config Release -j$(sysctl -n hw.ncpu)
+      
+      - name: Copy binaries
+        run: |
+          mkdir -p moxing/bin/darwin-arm64-metal
+          mkdir -p moxing/bin/darwin-arm64-cpu
+          
+          # Metal
+          cp build/llama.cpp/build-metal/bin/llama-server moxing/bin/darwin-arm64-metal/
+          cp build/llama.cpp/build-metal/bin/llama-cli moxing/bin/darwin-arm64-metal/
+          cp build/llama.cpp/build-metal/bin/llama-bench moxing/bin/darwin-arm64-metal/
+          cp build/llama.cpp/build-metal/libggml*.dylib moxing/bin/darwin-arm64-metal/
+          cp build/llama.cpp/build-metal/libllama*.dylib moxing/bin/darwin-arm64-metal/
+          
+          # CPU
+          cp build/llama.cpp/build-cpu/bin/llama-server moxing/bin/darwin-arm64-cpu/
+          cp build/llama.cpp/build-cpu/bin/llama-cli moxing/bin/darwin-arm64-cpu/
+          cp build/llama.cpp/build-cpu/bin/llama-bench moxing/bin/darwin-arm64-cpu/
+          cp build/llama.cpp/build-cpu/libggml*.dylib moxing/bin/darwin-arm64-cpu/
+          cp build/llama.cpp/build-cpu/libllama*.dylib moxing/bin/darwin-arm64-cpu/
+      
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-binaries
+          path: moxing/bin/darwin-*
+          retention-days: 1
+
+  build-wheel:
+    runs-on: ubuntu-latest
+    name: Build Python Wheel
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install build tools
+        run: |
+          pip install build twine
+      
+      - name: Build wheel
+        run: |
+          python -m build --wheel
+      
+      - name: Check wheel
+        run: |
+          twine check dist/*.whl
+          echo "Wheel size: $(du -h dist/*.whl)"
+      
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel
+          path: dist/*.whl
+          retention-days: 1
+
+  release:
+    runs-on: ubuntu-latest
+    name: Create Release
+    needs: [build-linux, build-windows, build-macos, build-wheel]
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          
+          # Wheel
+          cp artifacts/python-wheel/*.whl release/
+          
+          # Linux
+          cp artifacts/linux-binaries/*.tar.gz release/
+          
+          # Windows
+          cp artifacts/windows-binaries/*.zip release/
+          
+          # macOS (include in wheel, Metal is system-provided)
+          echo "macOS binaries bundled in wheel"
+          
+          ls -la release/
+      
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          name: MoXing v${{ steps.version.outputs.version }}
+          body: |
+            ## MoXing v${{ steps.version.outputs.version }}
+            
+            ### Files
+            
+            | File | Platform | Backend | Size |
+            |------|----------|---------|------|
+            | `*.whl` | All | Python | ~130KB |
+            | `moxing-cuda-v13-*.tar.gz` | Linux | CUDA v13 | ~750MB |
+            | `moxing-rocm-*.tar.gz` | Linux | ROCm | ~12MB |
+            | `moxing-windows-cuda-*.zip` | Windows | CUDA | ~50MB |
+            
+            ### Quick Start
+            
+            ```bash
+            # Install
+            pip install moxing-${{ steps.version.outputs.version }}-py3-none-any.whl
+            
+            # Linux CUDA
+            tar -xzf moxing-cuda-v13-${{ steps.version.outputs.version }}.tar.gz
+            ./install.sh
+            
+            # Linux ROCm
+            tar -xzf moxing-rocm-${{ steps.version.outputs.version }}.tar.gz
+            ./install.sh
+            
+            # Windows CUDA
+            unzip moxing-windows-cuda-${{ steps.version.outputs.version }}.zip
+            install.bat
+            ```
+            
+            ### Usage
+            
+            ```bash
+            moxing devices
+            moxing ollama serve model -b cuda -d gpu0
+            moxing ollama serve model -b rocm -d gpu1
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
