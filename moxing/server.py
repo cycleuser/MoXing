@@ -265,7 +265,10 @@ class LlamaServer:
             args.extend(["-ngl", "auto"])
         
         if self.device != "auto" and self.device != "CPU" and self.n_gpu_layers != 0:
-            args.extend(["-dev", self.device])
+            if self.gpu_backend in ["cuda", "rocm"]:
+                pass
+            else:
+                args.extend(["-dev", self.device])
         
         if self.gpu_backend not in ["auto", "cpu"]:
             os.environ["GGML_BACKEND"] = self.gpu_backend
@@ -328,10 +331,93 @@ class LlamaServer:
         
         return args
     
+    def _cleanup_old_processes(self):
+        """Kill processes using the target GPU device to free memory."""
+        import psutil
+        
+        killed_pids = set()
+        
+        target_device = self.device if self.device != "auto" else None
+        target_backend = self.gpu_backend if self.gpu_backend != "auto" else None
+        
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                name = proc.info['name'] or ''
+                cmdline = proc.info['cmdline'] or []
+                cmdline_str = ' '.join(cmdline)
+                
+                is_llama = name == 'llama-server' or 'llama-server' in cmdline_str
+                is_ollama_runner = name == 'ollama' or name == 'runner' or 'ollama runner' in cmdline_str
+                
+                if not (is_llama or is_ollama_runner):
+                    continue
+                
+                if target_device and target_backend:
+                    device_match = False
+                    
+                    if target_backend in ['rocm', 'hip']:
+                        if 'HIP_VISIBLE_DEVICES' in cmdline_str or f'-d {target_device}' in cmdline_str:
+                            device_match = True
+                    
+                    if not device_match:
+                        proc.kill()
+                        killed_pids.add(proc.info['pid'])
+                else:
+                    proc.kill()
+                    killed_pids.add(proc.info['pid'])
+                    
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        
+        if target_backend in ['rocm', 'hip'] and sys.platform != 'win32':
+            try:
+                result = subprocess.run(['amd-smi', 'list', '--gpum'], capture_output=True, timeout=5)
+                if result.returncode == 0:
+                    lines = result.stdout.decode().split('\n')
+                    for line in lines:
+                        if 'PID' in line and 'llama' in line.lower():
+                            parts = line.split()
+                            for part in parts:
+                                if part.isdigit():
+                                    pid = int(part)
+                                    if pid not in killed_pids:
+                                        try:
+                                            psutil.Process(pid).kill()
+                                            killed_pids.add(pid)
+                                        except:
+                                            pass
+            except:
+                pass
+        
+        if target_backend == 'cuda' and sys.platform != 'win32':
+            try:
+                result = subprocess.run(['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader'], 
+                                        capture_output=True, timeout=5)
+                if result.returncode == 0:
+                    for line in result.stdout.decode().strip().split('\n'):
+                        if line.strip() and line.strip().isdigit():
+                            pid = int(line.strip())
+                            try:
+                                proc = psutil.Process(pid)
+                                if 'llama' in proc.name().lower() or 'llama' in ' '.join(proc.cmdline()).lower():
+                                    if pid not in killed_pids:
+                                        proc.kill()
+                                        killed_pids.add(pid)
+                            except:
+                                pass
+            except:
+                pass
+        
+        if killed_pids and not self.quiet:
+            console.print(f"[yellow]Killed {len(killed_pids)} process(es) to free GPU memory[/yellow]")
+            time.sleep(3)
+    
     def start(self, wait: bool = True, timeout: int = 60) -> "LlamaServer":
         """Start the server."""
         if self._process is not None:
             raise RuntimeError("Server is already running")
+        
+        self._cleanup_old_processes()
         
         binary_path = self._get_binary_for_backend()
         
@@ -363,7 +449,12 @@ class LlamaServer:
         
         try:
             backend_type = BackendType(self.gpu_backend) if self.gpu_backend != "auto" else BackendType.CPU
-            device_obj = detector.get_device_by_name(self.device) if self.device != "auto" else None
+            
+            device_name = self.device
+            if device_name.startswith("ROCm") or device_name.startswith("CUDA") or device_name.startswith("MTL"):
+                device_name = "auto"
+            
+            device_obj = detector.get_device_by_name(device_name, self.gpu_backend) if device_name != "auto" else None
             backend_env = detector.get_backend_env(backend_type, device_obj)
             env.update(backend_env)
         except Exception:
@@ -494,8 +585,10 @@ class LlamaServer:
                 pass
             
             if self._process is not None and self._process.poll() is not None:
-                stdout, stderr = self._process.communicate()
-                raise RuntimeError(f"Server failed to start:\n{stderr}")
+                exit_code = self._process.poll()
+                if exit_code != 0:
+                    stdout, stderr = self._process.communicate()
+                    raise RuntimeError(f"Server failed to start (exit code {exit_code}):\n{stderr}")
                 
             time.sleep(1)
             
