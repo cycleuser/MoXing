@@ -18,6 +18,24 @@
 - **Max Tokens:** 20
 - **Metrics:** Load time, inference speed (tokens/s), memory usage
 
+### Backend Setup Notes
+
+**CUDA:** Uses Ollama's built-in CUDA v13 libraries (932MB total, 363MB for libggml-cuda.so)
+- No additional setup required
+- CUDA v13 is preferred over v12 (4x smaller)
+
+**ROCm:** Requires copying ROCm libraries to Ollama directory
+```bash
+sudo mkdir -p /usr/lib/ollama/rocm
+sudo cp moxing/bin/linux-x64-rocm-ollama/libggml-hip.so /usr/lib/ollama/rocm/
+```
+
+**Vulkan:** Uses Ollama's built-in Vulkan libraries (55MB)
+- No additional setup required
+
+**CPU:** Uses Ollama's built-in CPU libraries
+- No additional setup required
+
 ## Gemma4 Models
 
 ### gemma4:e2b (7.2 GB)
