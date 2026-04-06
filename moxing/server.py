@@ -252,10 +252,17 @@ class LlamaServer:
             "--metrics",
         ]
         
-        if self.n_gpu_layers >= 0:
+        if self.cpu_offload_layers > 0:
+            if self.n_gpu_layers > 0:
+                args.extend(["-ngl", str(self.n_gpu_layers)])
+            else:
+                args.extend(["-ngl", "auto"])
+        elif self.n_gpu_layers > 0:
             args.extend(["-ngl", str(self.n_gpu_layers)])
+        elif self.n_gpu_layers == 0:
+            args.extend(["-ngl", "0"])
         else:
-            args.extend(["-ngl", "999"])
+            args.extend(["-ngl", "auto"])
         
         if self.device != "auto" and self.device != "CPU" and self.n_gpu_layers != 0:
             args.extend(["-dev", self.device])
@@ -382,6 +389,9 @@ class LlamaServer:
             
             if "HIP_VISIBLE_DEVICES" not in env:
                 env["HIP_VISIBLE_DEVICES"] = "0"
+            
+            if "HSA_OVERRIDE_GFX_VERSION" not in env:
+                env["HSA_OVERRIDE_GFX_VERSION"] = "11.0.0"
         
         env["LD_LIBRARY_PATH"] = f"{binary_path.parent}:{env.get('LD_LIBRARY_PATH', '')}"
         

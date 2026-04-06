@@ -58,10 +58,12 @@ jobs:
       
       - name: Build ROCm 7.1.1 (gfx1100 for RX 7900 XTX)
         run: |
+          export HIPCXX=/opt/rocm-7.1.1/llvm/bin/clang
+          export HIP_PATH=/opt/rocm-7.1.1
           export PATH=/opt/rocm-7.1.1/bin:$PATH
           export LD_LIBRARY_PATH=/opt/rocm-7.1.1/lib:$LD_LIBRARY_PATH
           cd build/llama.cpp && mkdir build-rocm && cd build-rocm
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_HIPBLAS=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_COMMON=ON -DAMDGPU_TARGETS=gfx1100 -DCMAKE_C_COMPILER=/opt/rocm-7.1.1/llvm/bin/clang -DCMAKE_CXX_COMPILER=/opt/rocm-7.1.1/llvm/bin/clang++
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON -DGPU_TARGETS=gfx1100 -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_COMMON=ON
           cmake --build . --config Release -j$(nproc)
       
       - name: Build Vulkan

@@ -930,7 +930,10 @@ class DeviceDetector:
             else:
                 gpu_layers = -1
         else:
-            gpu_layers = offload_plan.gpu_layers
+            if offload_plan.can_fit_full:
+                gpu_layers = -1
+            else:
+                gpu_layers = -1
         
         return DeviceConfig(
             backend=backend,
