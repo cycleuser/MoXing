@@ -99,7 +99,7 @@ def version_cmd():
 def serve(
     model: str = typer.Argument(..., help="Model name, path to GGUF file, HuggingFace repo, or ollama:model"),
     quant: str = typer.Option("Q4_K_M", "-q", "--quant", help="Quantization type"),
-    host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
+    host: str = typer.Option("127.0.0.1", "--host", help="Server host (use 0.0.0.0 for LAN access)"),
     port: int = typer.Option(8080, "-p", "--port", help="Server port (0 for auto)"),
     ctx_size: int = typer.Option(0, "-c", "--ctx-size", help="Context size (0=auto-detect based on VRAM)"),
     source: str = typer.Option("auto", "-s", "--source", help="Model source (huggingface/modelscope/auto)"),
@@ -115,6 +115,10 @@ def serve(
     analyze_cache: bool = typer.Option(False, "--analyze-cache", help="Show KV cache analysis and exit"),
 ):
     """Start the LLM server with automatic configuration.
+    
+    Host Binding:
+    - 127.0.0.1 (default): Local access only
+    - 0.0.0.0: Allow LAN access (all network interfaces)
     
     KV Cache Quantization:
     - auto: Automatically choose based on available memory
@@ -140,6 +144,7 @@ def serve(
     - TurboQuant 3.5: moxing serve model.gguf --kv-cache tq3.5
     - CPU offload: moxing serve model.gguf --cpu-offload 10
     - Analyze cache: moxing serve model.gguf --analyze-cache
+    - LAN access: moxing serve model.gguf --host 0.0.0.0
     """
     from moxing.runner import AutoRunner
     from moxing.mlx_server import MLXServer
@@ -418,8 +423,13 @@ def run(
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed monitoring and statistics"),
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, vulkan, cuda, metal, cpu"),
     kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization"),
+    host: str = typer.Option("127.0.0.1", "--host", help="Server host (use 0.0.0.0 for LAN access)"),
 ):
     """Run inference with a model (auto-downloads if needed).
+    
+    Host Binding:
+    - 127.0.0.1 (default): Local access only
+    - 0.0.0.0: Allow LAN access (all network interfaces)
     
     Examples:
         moxing run model.gguf                    # Interactive chat
@@ -427,6 +437,7 @@ def run(
         moxing run model.gguf -v                 # Verbose monitoring
         moxing run model.gguf -p "Hello" -v      # Single prompt with stats
         moxing run model.gguf --kv-cache tq3.5   # With TurboQuant
+        moxing run model.gguf --host 0.0.0.0     # LAN access
     """
     from moxing.runner import AutoRunner
     from moxing.server import find_available_port
@@ -443,7 +454,8 @@ def run(
             ctx_size=ctx_size,
             backend=backend,
             kv_cache_quant=kv_cache,
-            port=port
+            port=port,
+            host=host
         )
         
         model_name = Path(model).name if Path(model).exists() else model
@@ -1594,7 +1606,7 @@ def ollama_list(
 def ollama_serve(
     model: str = typer.Argument(..., help="Ollama model name (e.g., gemma3:4b)"),
     port: int = typer.Option(8080, "-p", "--port", help="Server port (0 for auto)"),
-    host: str = typer.Option("127.0.0.1", "--host", help="Server host"),
+    host: str = typer.Option("127.0.0.1", "--host", help="Server host (use 0.0.0.0 for LAN access)"),
     ctx_size: int = typer.Option(32768, "-c", "--ctx-size", help="Context size (0=auto)"),
     device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu"),
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, cuda, rocm, vulkan, metal, mlx, mps, cpu"),
@@ -1614,6 +1626,10 @@ def ollama_serve(
     flash_attn: bool = typer.Option(True, "--flash-attn/--no-flash-attn", help="Enable flash attention"),
 ):
     """Serve an Ollama model with OpenAI-compatible API.
+    
+    Host Binding:
+    - 127.0.0.1 (default): Local access only
+    - 0.0.0.0: Allow LAN access (all network interfaces)
     
     Backends:
     - cuda: NVIDIA GPUs (fastest)
@@ -1651,6 +1667,7 @@ def ollama_serve(
         moxing ollama serve gemma3:1b -c 65536 --kv-cache q4_0
         moxing ollama serve omnicoder-9b -v    # Verbose monitoring
         moxing ollama serve omnicoder-9b -w    # Web monitoring
+        moxing ollama serve omnicoder-9b --host 0.0.0.0  # LAN access
     """
     ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor, skip_check, kv_cache, cpu_offload, prompt_offload, rope_scaling, rope_scale, threads, batch_size, ubatch_size, flash_attn)
 
@@ -2272,8 +2289,13 @@ def ollama_run(
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, vulkan, cuda, metal, cpu"),
     kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q4_0, tq4, tq3.5, tq3, tq2.5, tq2"),
     device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu"),
+    host: str = typer.Option("127.0.0.1", "--host", help="Server host (use 0.0.0.0 for LAN access)"),
 ):
     """Run an Ollama model with detailed monitoring support.
+    
+    Host Binding:
+    - 127.0.0.1 (default): Local access only
+    - 0.0.0.0: Allow LAN access (all network interfaces)
     
     Examples:
         moxing ollama run carstenuhlig/omnicoder-9b           # Interactive chat
@@ -2281,6 +2303,7 @@ def ollama_run(
         moxing ollama run omnicoder-9b -v                      # Verbose monitoring
         moxing ollama run omnicoder-9b -v -c 65536             # Large context + verbose
         moxing ollama run omnicoder-9b --kv-cache tq2 -v       # TurboQuant + verbose
+        moxing ollama run omnicoder-9b --host 0.0.0.0          # LAN access
     """
     from moxing.server import find_available_port, LlamaServer
     from moxing.ollama import get_ollama_model, OllamaClient
@@ -2332,7 +2355,7 @@ def ollama_run(
     try:
         server = LlamaServer(
             model=str(gguf_path),
-            host="127.0.0.1",
+            host=host,
             port=port,
             ctx_size=ctx_size,
             n_gpu_layers=device_config.n_gpu_layers,
