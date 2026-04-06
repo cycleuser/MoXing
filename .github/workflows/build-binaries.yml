@@ -33,7 +33,7 @@ jobs:
           curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/rocm-archive-keyring.gpg
           echo "deb [arch=amd64 signed-by=/usr/share/keyrings/rocm-archive-keyring.gpg] https://repo.radeon.com/rocm/apt/7.1.1 jammy main" | sudo tee /etc/apt/sources.list.d/rocm.list
           sudo apt update
-          sudo apt install -y rocm-dev rocm-libs rocm-device-libs hip-dev hip-base hiprtc-dev
+          sudo apt install -y rocm-dev hip-dev rocm-libs
       
       - name: Install Vulkan SDK
         run: |
