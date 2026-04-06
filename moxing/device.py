@@ -58,6 +58,7 @@ class Device:
     free_memory_mb: int = 0
     vendor: str = ""
     total_layers: int = 0
+    backend_index: int = -1
     
     @property
     def memory_gb(self) -> float:
@@ -653,6 +654,8 @@ class DeviceDetector:
         unique_devices = cuda_devices + rocm_devices + metal_devices + vulkan_devices + other_devices
         
         for i, dev in enumerate(unique_devices):
+            if dev.backend_index == -1:
+                dev.backend_index = dev.index
             dev.index = i
         
         if cpu_devices:
@@ -851,12 +854,31 @@ class DeviceDetector:
         
         return "; ".join(notes)
     
-    def get_device_by_name(self, device_name: str) -> Optional[Device]:
-        """Get device by name like 'gpu0', 'gpu1', 'cpu'."""
+    def get_device_by_name(self, device_name: str, backend: Optional[str] = None) -> Optional[Device]:
+        """Get device by name like 'gpu0', 'gpu1', 'cpu'.
+        
+        Args:
+            device_name: Device identifier (e.g., 'gpu0', 'gpu1', 'cpu')
+            backend: Optional backend filter (e.g., 'rocm', 'cuda', 'vulkan')
+        """
         if not self._devices:
             self.detect()
         
         device_name = device_name.lower().strip()
+        
+        backend_type = None
+        if backend:
+            backend = backend.lower()
+            if backend in ["rocm", "hip"]:
+                backend_type = BackendType.ROCM
+            elif backend == "cuda":
+                backend_type = BackendType.CUDA
+            elif backend == "vulkan":
+                backend_type = BackendType.VULKAN
+            elif backend in ["metal", "mtl"]:
+                backend_type = BackendType.METAL
+            elif backend == "cpu":
+                backend_type = BackendType.CPU
         
         if device_name == "cpu":
             for d in self._devices:
@@ -869,7 +891,17 @@ class DeviceDetector:
                 idx = int(device_name[3:])
                 for d in self._devices:
                     if d.index == idx and d.backend != BackendType.CPU:
-                        return d
+                        if backend_type is None or d.backend == backend_type:
+                            return d
+                if backend_type:
+                    for d in self._devices:
+                        if d.index == idx and d.backend != BackendType.CPU:
+                            if backend_type == BackendType.ROCM and d.vendor == "amd":
+                                return d
+                            elif backend_type == BackendType.CUDA and d.vendor == "nvidia":
+                                return d
+                            elif backend_type == BackendType.VULKAN:
+                                return d
             except ValueError:
                 pass
         
@@ -1022,7 +1054,8 @@ class DeviceDetector:
         
         if backend == BackendType.ROCM:
             if device:
-                env["HIP_VISIBLE_DEVICES"] = str(device.index)
+                backend_idx = device.backend_index if device.backend_index >= 0 else device.index
+                env["HIP_VISIBLE_DEVICES"] = str(backend_idx)
             else:
                 env["HIP_VISIBLE_DEVICES"] = "0"
             
@@ -1043,7 +1076,8 @@ class DeviceDetector:
         
         elif backend == BackendType.CUDA:
             if device:
-                env["CUDA_VISIBLE_DEVICES"] = str(device.index)
+                backend_idx = device.backend_index if device.backend_index >= 0 else device.index
+                env["CUDA_VISIBLE_DEVICES"] = str(backend_idx)
         
         elif backend == BackendType.METAL:
             pass

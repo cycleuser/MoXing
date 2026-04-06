@@ -319,7 +319,7 @@ def serve(
             elif device_config.backend == BackendType.METAL:
                 device_str = f"MTL{device_config.device.index}"
             elif device_config.backend == BackendType.ROCM:
-                device_str = f"HIP{device_config.device.index}"
+                device_str = f"ROCm{device_config.device.index}"
             elif device_config.backend == BackendType.CUDA:
                 device_str = f"CUDA{device_config.device.index}"
             else:

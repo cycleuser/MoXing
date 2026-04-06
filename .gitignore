@@ -272,3 +272,5 @@ OLLAMA_*.md
 IMPLEMENTATION_*.md
 UPDATE_*.md
 QUICK_*.md
+/benchmark_results
+/test_results
