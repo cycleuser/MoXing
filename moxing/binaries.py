@@ -45,7 +45,7 @@ BIN_DIR = Path(__file__).parent / "bin"
 CONFIG_DIR = Path.home() / ".config" / "moxing"
 SKIP_UPDATE_FILE = CONFIG_DIR / "skip_update"
 
-ESSENTIAL_BINARIES = ["llama-server", "llama-cli", "llama-bench", "llama-quantize"]
+ESSENTIAL_BINARIES = ["llama-server", "llama-cli", "llama-mtmd-cli", "llama-bench", "llama-quantize"]
 
 BACKEND_PRIORITY = {
     "linux": ["cuda", "vulkan", "rocm", "cpu"],

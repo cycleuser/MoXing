@@ -2,7 +2,6 @@
 __pycache__/
 *.py[codz]
 *$py.class
-docs
 
 # C extensions
 *.so
@@ -221,3 +220,44 @@ TURBOQUANT_BENCHMARK.md
 MAX_CONTEXT_BENCHMARK.md
 KV_CACHE_WECHAT_ARTICLE.md
 scripts/ollama-llama-build/llama.cpp/
+
+# Build directories
+build_*/
+binaries_*/
+Release/
+CMakeFiles/
+CTestTestfile.cmake
+DartConfiguration.tcl
+Makefile
+cmake_install.cmake
+compile_commands.json
+llama-*.cmake
+llama.pc
+
+# Test and benchmark files
+benchmark_*.json
+test_*.json
+test_*.py
+benchmark_*.py
+*_report.json
+*_test_report.json
+
+# Documentation (unignore docs/)
+!docs/
+
+# Build scripts (keep useful ones)
+build_*.sh
+pack_*.sh
+install_*.sh
+run_*.sh
+
+# Generated files
+ggml/
+src/
+tools/
+vendor/
+examples/
+tests/
+pocs/
+common/
+llama_ollama/
