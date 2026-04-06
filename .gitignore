@@ -247,6 +247,7 @@ benchmark_*.py
 
 # Build scripts (keep useful ones)
 build_*.sh
+!scripts/build_all_binaries.sh
 pack_*.sh
 install_*.sh
 run_*.sh
