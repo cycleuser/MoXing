@@ -58,12 +58,8 @@ jobs:
       
       - name: Build ROCm 7.1.1 (gfx1100 for RX 7900 XTX)
         run: |
-          export HIPCXX=/opt/rocm-7.1.1/llvm/bin/clang
-          export HIP_PATH=/opt/rocm-7.1.1
-          export PATH=/opt/rocm-7.1.1/bin:$PATH
-          export LD_LIBRARY_PATH=/opt/rocm-7.1.1/lib:$LD_LIBRARY_PATH
           cd build/llama.cpp && mkdir build-rocm && cd build-rocm
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON -DGPU_TARGETS=gfx1100 -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_COMMON=ON
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON -DGPU_TARGETS=gfx1100 -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_COMMON=ON -DHIP_PATH=/opt/rocm-7.1.1
           cmake --build . --config Release -j$(nproc)
       
       - name: Build Vulkan
@@ -133,9 +129,10 @@ jobs:
           mkdir -p moxing/bin/windows-x64-{cuda,cpu}
           cd build/llama.cpp
           for b in cuda cpu; do
-            cp build-$b/bin/Release/*.exe ../moxing/bin/windows-x64-$b/ 2>/dev/null || true
-            cp build-$b/bin/Release/*.dll ../moxing/bin/windows-x64-$b/ 2>/dev/null || true
+            cp build-$b/bin/*.exe ../moxing/bin/windows-x64-$b/ 2>/dev/null || true
+            cp build-$b/bin/*.dll ../moxing/bin/windows-x64-$b/ 2>/dev/null || true
           done
+          ls -lh ../moxing/bin/windows-x64-*/
       
       - uses: actions/upload-artifact@v4
         with:
@@ -172,12 +169,14 @@ jobs:
         run: |
           mkdir -p moxing/bin/darwin-arm64-{metal,cpu}
           cd build/llama.cpp
+          ls -R build-metal/bin/ 2>/dev/null || echo "No build-metal/bin"
+          ls -R build-cpu/bin/ 2>/dev/null || echo "No build-cpu/bin"
           for backend in metal cpu; do
-            mkdir -p ../moxing/bin/darwin-arm64-$backend
-            cp build-$backend/bin/llama-* ../moxing/bin/darwin-arm64-$backend/ 2>/dev/null || true
-            cp build-$backend/*.dylib ../moxing/bin/darwin-arm64-$backend/ 2>/dev/null || true
+            cp build-$backend/bin/llama-server ../moxing/bin/darwin-arm64-$backend/ 2>/dev/null || true
+            cp build-$backend/bin/llama-cli ../moxing/bin/darwin-arm64-$backend/ 2>/dev/null || true
+            cp build-$backend/bin/*.dylib ../moxing/bin/darwin-arm64-$backend/ 2>/dev/null || true
           done
-          ls -lh ../moxing/bin/darwin-*/
+          ls -lh ../moxing/bin/darwin-*/ || echo "No binaries copied"
       
       - uses: actions/upload-artifact@v4
         with:
