@@ -78,7 +78,7 @@ version = { attr = "moxing.__version__" }
 include = ["moxing*"]
 
 [tool.setuptools.package-data]
-moxing = ["bin/**/*"]
+moxing = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
