@@ -6,65 +6,112 @@ on:
       - 'v*'
   workflow_dispatch:
 
+env:
+  CMAKE_BUILD_TYPE: Release
+
 jobs:
   build-linux:
     runs-on: ubuntu-latest
-    name: Build Linux Binaries
+    name: Build Linux (CUDA + Vulkan + CPU)
     
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
+      - name: Install CUDA Toolkit
+        run: |
+          wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt update
+          sudo apt install -y cuda-toolkit-12-6
+      
+      - name: Install Vulkan SDK
+        run: |
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+          sudo apt update
+          sudo apt install -y vulkan-sdk
+      
       - name: Install build dependencies
         run: |
-          sudo apt update
-          sudo apt install -y build-essential cmake git \
-            libcurl4-openssl-dev
+          sudo apt install -y build-essential cmake git libcurl4-openssl-dev
       
       - name: Clone llama.cpp
         run: |
           git clone --depth 1 --recursive https://github.com/ggml-org/llama.cpp.git build/llama.cpp
       
-      - name: Build CPU
+      - name: Build CUDA
         run: |
           cd build/llama.cpp
-          mkdir build-cpu && cd build-cpu
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON
+          mkdir build-cuda && cd build-cuda
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_CUDA=ON \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_COMMON=ON \
+            -DCMAKE_CUDA_ARCHITECTURES=89 \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
           cmake --build . --config Release -j$(nproc)
       
       - name: Build Vulkan
         run: |
-          sudo apt install -y vulkan-sdk libvulkan-dev
           cd build/llama.cpp
           mkdir build-vulkan && cd build-vulkan
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_VULKAN=ON \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_COMMON=ON
+          cmake --build . --config Release -j$(nproc)
+      
+      - name: Build CPU
+        run: |
+          cd build/llama.cpp
+          mkdir build-cpu && cd build-cpu
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_COMMON=ON
           cmake --build . --config Release -j$(nproc)
       
       - name: Copy binaries
         run: |
-          mkdir -p moxing/bin/linux-x64-cpu
+          mkdir -p moxing/bin/linux-x64-cuda
           mkdir -p moxing/bin/linux-x64-vulkan
+          mkdir -p moxing/bin/linux-x64-cpu
           
-          cp build/llama.cpp/build-cpu/bin/llama-server moxing/bin/linux-x64-cpu/
-          cp build/llama.cpp/build-cpu/bin/llama-cli moxing/bin/linux-x64-cpu/
-          cp build/llama.cpp/build-cpu/bin/llama-bench moxing/bin/linux-x64-cpu/
-          cp build/llama.cpp/build-cpu/libggml.so* moxing/bin/linux-x64-cpu/
-          cp build/llama.cpp/build-cpu/libllama.so* moxing/bin/linux-x64-cpu/
+          cd build/llama.cpp
           
-          cp build/llama.cpp/build-vulkan/bin/llama-server moxing/bin/linux-x64-vulkan/
-          cp build/llama.cpp/build-vulkan/bin/llama-cli moxing/bin/linux-x64-vulkan/
-          cp build/llama.cpp/build-vulkan/bin/llama-bench moxing/bin/linux-x64-vulkan/
-          cp build/llama.cpp/build-vulkan/libggml.so* moxing/bin/linux-x64-vulkan/
-          cp build/llama.cpp/build-vulkan/libllama.so* moxing/bin/linux-x64-vulkan/
+          # CUDA
+          cp build-cuda/bin/llama-server ../moxing/bin/linux-x64-cuda/
+          cp build-cuda/bin/llama-cli ../moxing/bin/linux-x64-cuda/
+          cp build-cuda/bin/llama-bench ../moxing/bin/linux-x64-cuda/
+          cp build-cuda/libggml.so* ../moxing/bin/linux-x64-cuda/
+          cp build-cuda/libllama.so* ../moxing/bin/linux-x64-cuda/
+          cp build-cuda/libggml-cuda.so* ../moxing/bin/linux-x64-cuda/
+          
+          # Vulkan
+          cp build-vulkan/bin/llama-server ../moxing/bin/linux-x64-vulkan/
+          cp build-vulkan/bin/llama-cli ../moxing/bin/linux-x64-vulkan/
+          cp build-vulkan/bin/llama-bench ../moxing/bin/linux-x64-vulkan/
+          cp build-vulkan/libggml.so* ../moxing/bin/linux-x64-vulkan/
+          cp build-vulkan/libllama.so* ../moxing/bin/linux-x64-vulkan/
+          cp build-vulkan/libggml-vulkan.so* ../moxing/bin/linux-x64-vulkan/
+          
+          # CPU
+          cp build-cpu/bin/llama-server ../moxing/bin/linux-x64-cpu/
+          cp build-cpu/bin/llama-cli ../moxing/bin/linux-x64-cpu/
+          cp build-cpu/bin/llama-bench ../moxing/bin/linux-x64-cpu/
+          cp build-cpu/libggml.so* ../moxing/bin/linux-x64-cpu/
+          cp build-cpu/libllama.so* ../moxing/bin/linux-x64-cpu/
       
       - name: Package
         run: |
           VERSION=$(python -c "import sys; sys.path.insert(0, '.'); from moxing import __version__; print(__version__)")
+          mkdir -p dist
           cd moxing/bin
           tar -czf ../../../dist/linux-binaries-$VERSION.tar.gz linux-x64-*
       
@@ -75,55 +122,116 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
-    name: Build Windows Binaries
+    name: Build Windows (CUDA + Vulkan + CPU)
     
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      
+      - name: Install CUDA Toolkit
+        shell: powershell
+        run: |
+          # Download CUDA 12.6
+          $cudaUrl = "https://developer.download.nvidia.com/compute/cuda/12.6.0/local_installers/cuda_12.6.0_560.17.05_windows.exe"
+          $cudaInstaller = "$env:TEMP\cuda_installer.exe"
+          Invoke-WebRequest -Uri $cudaUrl -OutFile $cudaInstaller
+          Start-Process -FilePath $cudaInstaller -ArgumentList "-s" -NoNewWindow -Wait
+          $env:PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin;$env:PATH"
+          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      
+      - name: Install Vulkan SDK
+        shell: powershell
+        run: |
+          $vulkanUrl = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe"
+          $vulkanInstaller = "$env:TEMP\vulkan-sdk.exe"
+          Invoke-WebRequest -Uri $vulkanUrl -OutFile $vulkanInstaller
+          Start-Process -FilePath $vulkanInstaller -ArgumentList "--accept-licenses --default-answer --confirm-command install" -NoNewWindow -Wait
+          $vulkanSdkPath = Get-ChildItem "C:\VulkanSDK" | Sort-Object -Descending | Select-Object -First 1
+          echo "$($vulkanSdkPath.FullName)\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "VULKAN_SDK=$($vulkanSdkPath.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       
       - name: Clone llama.cpp
         run: |
           git clone --depth 1 --recursive https://github.com/ggml-org/llama.cpp.git build/llama.cpp
+      
+      - name: Build CUDA
+        run: |
+          cd build/llama.cpp
+          mkdir build-cuda
+          cd build-cuda
+          cmake .. `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGGML_CUDA=ON `
+            -DLLAMA_BUILD_SERVER=ON `
+            -DLLAMA_BUILD_COMMON=ON `
+            -DCMAKE_CUDA_ARCHITECTURES=89 `
+            -G "Visual Studio 17 2022" `
+            -A x64
+          cmake --build . --config Release --parallel
+      
+      - name: Build Vulkan
+        env:
+          VULKAN_SDK: ${{ env.VULKAN_SDK }}
+        run: |
+          cd build/llama.cpp
+          mkdir build-vulkan
+          cd build-vulkan
+          cmake .. `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGGML_VULKAN=ON `
+            -DLLAMA_BUILD_SERVER=ON `
+            -DLLAMA_BUILD_COMMON=ON `
+            -G "Visual Studio 17 2022" `
+            -A x64
+          cmake --build . --config Release --parallel
       
       - name: Build CPU
         run: |
           cd build/llama.cpp
           mkdir build-cpu
           cd build-cpu
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON -G "Visual Studio 17 2022" -A x64
-          cmake --build . --config Release --parallel
-      
-      - name: Build Vulkan
-        run: |
-          cd build/llama.cpp
-          mkdir build-vulkan
-          cd build-vulkan
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DLLAMA_BUILD_SERVER=ON -G "Visual Studio 17 2022" -A x64
+          cmake .. `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DLLAMA_BUILD_SERVER=ON `
+            -DLLAMA_BUILD_COMMON=ON `
+            -G "Visual Studio 17 2022" `
+            -A x64
           cmake --build . --config Release --parallel
       
       - name: Copy binaries
         run: |
-          mkdir -p moxing/bin/windows-x64-cpu
+          mkdir -p moxing/bin/windows-x64-cuda
           mkdir -p moxing/bin/windows-x64-vulkan
+          mkdir -p moxing/bin/windows-x64-cpu
           
-          cp build/llama.cpp/build-cpu/bin/Release/llama-server.exe moxing/bin/windows-x64-cpu/
-          cp build/llama.cpp/build-cpu/bin/Release/llama-cli.exe moxing/bin/windows-x64-cpu/
-          cp build/llama.cpp/build-cpu/bin/Release/llama-bench.exe moxing/bin/windows-x64-cpu/
-          cp build/llama.cpp/build-cpu/bin/Release/*.dll moxing/bin/windows-x64-cpu/
+          cd build/llama.cpp
           
-          cp build/llama.cpp/build-vulkan/bin/Release/llama-server.exe moxing/bin/windows-x64-vulkan/
-          cp build/llama.cpp/build-vulkan/bin/Release/llama-cli.exe moxing/bin/windows-x64-vulkan/
-          cp build/llama.cpp/build-vulkan/bin/Release/llama-bench.exe moxing/bin/windows-x64-vulkan/
-          cp build/llama.cpp/build-vulkan/bin/Release/*.dll moxing/bin/windows-x64-vulkan/
+          # CUDA
+          cp build-cuda/bin/Release/llama-server.exe ../moxing/bin/windows-x64-cuda/
+          cp build-cuda/bin/Release/llama-cli.exe ../moxing/bin/windows-x64-cuda/
+          cp build-cuda/bin/Release/llama-bench.exe ../moxing/bin/windows-x64-cuda/
+          cp build-cuda/bin/Release/*.dll ../moxing/bin/windows-x64-cuda/
+          
+          # Vulkan
+          cp build-vulkan/bin/Release/llama-server.exe ../moxing/bin/windows-x64-vulkan/
+          cp build-vulkan/bin/Release/llama-cli.exe ../moxing/bin/windows-x64-vulkan/
+          cp build-vulkan/bin/Release/llama-bench.exe ../moxing/bin/windows-x64-vulkan/
+          cp build-vulkan/bin/Release/*.dll ../moxing/bin/windows-x64-vulkan/
+          
+          # CPU
+          cp build-cpu/bin/Release/llama-server.exe ../moxing/bin/windows-x64-cpu/
+          cp build-cpu/bin/Release/llama-cli.exe ../moxing/bin/windows-x64-cpu/
+          cp build-cpu/bin/Release/llama-bench.exe ../moxing/bin/windows-x64-cpu/
+          cp build-cpu/bin/Release/*.dll ../moxing/bin/windows-x64-cpu/
       
       - name: Package
         run: |
           $VERSION = python -c "import sys; sys.path.insert(0, '.'); from moxing import __version__; print(__version__)"
+          mkdir -p dist
           cd moxing/bin
           Compress-Archive -Path windows-x64-* -DestinationPath ../../../dist/windows-binaries-$VERSION.zip
       
@@ -134,14 +242,12 @@ jobs:
 
   build-macos:
     runs-on: macos-latest
-    name: Build macOS Binaries
+    name: Build macOS (Metal + CPU)
     
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
@@ -154,7 +260,12 @@ jobs:
           cd build/llama.cpp
           mkdir build-metal
           cd build-metal
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DLLAMA_BUILD_SERVER=ON
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_METAL=ON \
+            -DGGML_METAL_EMBED_LIBRARY=ON \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_COMMON=ON
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
       
       - name: Build CPU
@@ -162,7 +273,11 @@ jobs:
           cd build/llama.cpp
           mkdir build-cpu
           cd build-cpu
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=OFF -DLLAMA_BUILD_SERVER=ON
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_METAL=OFF \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_COMMON=ON
           cmake --build . --config Release -j$(sysctl -n hw.ncpu)
       
       - name: Copy binaries
@@ -170,21 +285,24 @@ jobs:
           mkdir -p moxing/bin/darwin-arm64-metal
           mkdir -p moxing/bin/darwin-arm64-cpu
           
-          cp build/llama.cpp/build-metal/bin/llama-server moxing/bin/darwin-arm64-metal/
-          cp build/llama.cpp/build-metal/bin/llama-cli moxing/bin/darwin-arm64-metal/
-          cp build/llama.cpp/build-metal/bin/llama-bench moxing/bin/darwin-arm64-metal/
-          cp build/llama.cpp/build-metal/libggml*.dylib moxing/bin/darwin-arm64-metal/
-          cp build/llama.cpp/build-metal/libllama*.dylib moxing/bin/darwin-arm64-metal/
+          cd build/llama.cpp
           
-          cp build/llama.cpp/build-cpu/bin/llama-server moxing/bin/darwin-arm64-cpu/
-          cp build/llama.cpp/build-cpu/bin/llama-cli moxing/bin/darwin-arm64-cpu/
-          cp build/llama.cpp/build-cpu/bin/llama-bench moxing/bin/darwin-arm64-cpu/
-          cp build/llama.cpp/build-cpu/libggml*.dylib moxing/bin/darwin-arm64-cpu/
-          cp build/llama.cpp/build-cpu/libllama*.dylib moxing/bin/darwin-arm64-cpu/
+          # Metal - 使用正确的路径
+          find build-metal -name "llama-server" -exec cp {} ../moxing/bin/darwin-arm64-metal/ \;
+          find build-metal -name "llama-cli" -exec cp {} ../moxing/bin/darwin-arm64-metal/ \;
+          find build-metal -name "llama-bench" -exec cp {} ../moxing/bin/darwin-arm64-metal/ \;
+          find build-metal -name "*.dylib" -exec cp {} ../moxing/bin/darwin-arm64-metal/ \;
+          
+          # CPU
+          find build-cpu -name "llama-server" -exec cp {} ../moxing/bin/darwin-arm64-cpu/ \;
+          find build-cpu -name "llama-cli" -exec cp {} ../moxing/bin/darwin-arm64-cpu/ \;
+          find build-cpu -name "llama-bench" -exec cp {} ../moxing/bin/darwin-arm64-cpu/ \;
+          find build-cpu -name "*.dylib" -exec cp {} ../moxing/bin/darwin-arm64-cpu/ \;
       
       - name: Package
         run: |
           VERSION=$(python -c "import sys; sys.path.insert(0, '.'); from moxing import __version__; print(__version__)")
+          mkdir -p dist
           cd moxing/bin
           tar -czf ../../../dist/macos-binaries-$VERSION.tar.gz darwin-*
       
@@ -231,5 +349,22 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
+          name: MoXing v${{ github.ref_name }}
+          body: |
+            ## MoXing ${{ github.ref_name }}
+            
+            ### Linux Binaries
+            - CUDA 12.6 (NVIDIA GPU)
+            - Vulkan (Cross-platform GPU)
+            - CPU (Fallback)
+            
+            ### Windows Binaries
+            - CUDA 12.6 (NVIDIA GPU)
+            - Vulkan (Cross-platform GPU)
+            - CPU (Fallback)
+            
+            ### macOS Binaries
+            - Metal (Apple Silicon GPU)
+            - CPU (Intel/Apple Silicon)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
