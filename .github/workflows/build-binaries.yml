@@ -12,7 +12,7 @@ env:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
-    name: Build Linux (CUDA + Vulkan + CPU)
+    name: Build Linux (CUDA 13.2 + ROCm 7.1 + Vulkan + CPU)
     
     steps:
       - uses: actions/checkout@v4
@@ -21,12 +21,19 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Install CUDA Toolkit
+      - name: Install CUDA 13.2
         run: |
           wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt update
-          sudo apt install -y cuda-toolkit-12-6
+          sudo apt install -y cuda-toolkit-13-2
+      
+      - name: Install ROCm 7.1
+        run: |
+          sudo apt install -y libstdc++-12-dev
+          wget https://repo.radeon.com/amdgpu-install/7.1/ubuntu/jammy/amdgpu-install_7.1.50502-1_all.deb
+          sudo dpkg -i amdgpu-install_7.1.50502-1_all.deb
+          sudo amdgpu-install --usecase=rocm,hip --no-dkms -y
       
       - name: Install Vulkan SDK
         run: |
@@ -43,8 +50,10 @@ jobs:
         run: |
           git clone --depth 1 --recursive https://github.com/ggml-org/llama.cpp.git build/llama.cpp
       
-      - name: Build CUDA
+      - name: Build CUDA 13.2
         run: |
+          export PATH=/usr/local/cuda-13.2/bin:$PATH
+          export LD_LIBRARY_PATH=/usr/local/cuda-13.2/lib64:$LD_LIBRARY_PATH
           cd build/llama.cpp
           mkdir build-cuda && cd build-cuda
           cmake .. \
@@ -52,8 +61,24 @@ jobs:
             -DGGML_CUDA=ON \
             -DLLAMA_BUILD_SERVER=ON \
             -DLLAMA_BUILD_COMMON=ON \
-            -DCMAKE_CUDA_ARCHITECTURES=89 \
-            -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
+            -DCMAKE_CUDA_ARCHITECTURES="89;90" \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.2/bin/nvcc
+          cmake --build . --config Release -j$(nproc)
+      
+      - name: Build ROCm 7.1 (gfx1100 for RX 7900 XTX)
+        run: |
+          export PATH=/opt/rocm/bin:$PATH
+          export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH
+          cd build/llama.cpp
+          mkdir build-rocm && cd build-rocm
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_HIPBLAS=ON \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_COMMON=ON \
+            -DAMDGPU_TARGETS=gfx1100 \
+            -DCMAKE_C_COMPILER=/opt/rocm/llvm/bin/clang \
+            -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/clang++
           cmake --build . --config Release -j$(nproc)
       
       - name: Build Vulkan
@@ -80,12 +105,12 @@ jobs:
       - name: Copy binaries
         run: |
           mkdir -p moxing/bin/linux-x64-cuda
+          mkdir -p moxing/bin/linux-x64-rocm
           mkdir -p moxing/bin/linux-x64-vulkan
           mkdir -p moxing/bin/linux-x64-cpu
           
           cd build/llama.cpp
           
-          # CUDA
           cp build-cuda/bin/llama-server ../moxing/bin/linux-x64-cuda/
           cp build-cuda/bin/llama-cli ../moxing/bin/linux-x64-cuda/
           cp build-cuda/bin/llama-bench ../moxing/bin/linux-x64-cuda/
@@ -93,7 +118,13 @@ jobs:
           cp build-cuda/libllama.so* ../moxing/bin/linux-x64-cuda/
           cp build-cuda/libggml-cuda.so* ../moxing/bin/linux-x64-cuda/
           
-          # Vulkan
+          cp build-rocm/bin/llama-server ../moxing/bin/linux-x64-rocm/
+          cp build-rocm/bin/llama-cli ../moxing/bin/linux-x64-rocm/
+          cp build-rocm/bin/llama-bench ../moxing/bin/linux-x64-rocm/
+          cp build-rocm/libggml.so* ../moxing/bin/linux-x64-rocm/
+          cp build-rocm/libllama.so* ../moxing/bin/linux-x64-rocm/
+          cp build-rocm/libggml-hip.so* ../moxing/bin/linux-x64-rocm/
+          
           cp build-vulkan/bin/llama-server ../moxing/bin/linux-x64-vulkan/
           cp build-vulkan/bin/llama-cli ../moxing/bin/linux-x64-vulkan/
           cp build-vulkan/bin/llama-bench ../moxing/bin/linux-x64-vulkan/
@@ -101,28 +132,21 @@ jobs:
           cp build-vulkan/libllama.so* ../moxing/bin/linux-x64-vulkan/
           cp build-vulkan/libggml-vulkan.so* ../moxing/bin/linux-x64-vulkan/
           
-          # CPU
           cp build-cpu/bin/llama-server ../moxing/bin/linux-x64-cpu/
           cp build-cpu/bin/llama-cli ../moxing/bin/linux-x64-cpu/
           cp build-cpu/bin/llama-bench ../moxing/bin/linux-x64-cpu/
           cp build-cpu/libggml.so* ../moxing/bin/linux-x64-cpu/
           cp build-cpu/libllama.so* ../moxing/bin/linux-x64-cpu/
       
-      - name: Package
-        run: |
-          VERSION=$(python -c "import sys; sys.path.insert(0, '.'); from moxing import __version__; print(__version__)")
-          mkdir -p dist
-          cd moxing/bin
-          tar -czf ../../../dist/linux-binaries-$VERSION.tar.gz linux-x64-*
-      
-      - uses: actions/upload-artifact@v4
+      - name: Upload Linux binaries
+        uses: actions/upload-artifact@v4
         with:
           name: linux-binaries
-          path: dist/*.tar.gz
+          path: moxing/bin/linux-x64-*
 
   build-windows:
     runs-on: windows-latest
-    name: Build Windows (CUDA + Vulkan + CPU)
+    name: Build Windows (CUDA 13.2 + Vulkan + CPU)
     
     steps:
       - uses: actions/checkout@v4
@@ -131,17 +155,16 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Install CUDA Toolkit
+      - name: Install CUDA 13.2
         shell: powershell
         run: |
-          # Download CUDA 12.6
-          $cudaUrl = "https://developer.download.nvidia.com/compute/cuda/12.6.0/local_installers/cuda_12.6.0_560.17.05_windows.exe"
+          $cudaUrl = "https://developer.download.nvidia.com/compute/cuda/13.2.0/local_installers/cuda_13.2.0_560.17.05_windows.exe"
           $cudaInstaller = "$env:TEMP\cuda_installer.exe"
           Invoke-WebRequest -Uri $cudaUrl -OutFile $cudaInstaller
           Start-Process -FilePath $cudaInstaller -ArgumentList "-s" -NoNewWindow -Wait
-          $env:PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin;$env:PATH"
-          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $env:PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\bin;$env:PATH"
+          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       
       - name: Install Vulkan SDK
         shell: powershell
@@ -158,7 +181,7 @@ jobs:
         run: |
           git clone --depth 1 --recursive https://github.com/ggml-org/llama.cpp.git build/llama.cpp
       
-      - name: Build CUDA
+      - name: Build CUDA 13.2
         run: |
           cd build/llama.cpp
           mkdir build-cuda
@@ -168,14 +191,12 @@ jobs:
             -DGGML_CUDA=ON `
             -DLLAMA_BUILD_SERVER=ON `
             -DLLAMA_BUILD_COMMON=ON `
-            -DCMAKE_CUDA_ARCHITECTURES=89 `
+            -DCMAKE_CUDA_ARCHITECTURES="89;90" `
             -G "Visual Studio 17 2022" `
             -A x64
           cmake --build . --config Release --parallel
       
       - name: Build Vulkan
-        env:
-          VULKAN_SDK: ${{ env.VULKAN_SDK }}
         run: |
           cd build/llama.cpp
           mkdir build-vulkan
@@ -210,35 +231,26 @@ jobs:
           
           cd build/llama.cpp
           
-          # CUDA
           cp build-cuda/bin/Release/llama-server.exe ../moxing/bin/windows-x64-cuda/
           cp build-cuda/bin/Release/llama-cli.exe ../moxing/bin/windows-x64-cuda/
           cp build-cuda/bin/Release/llama-bench.exe ../moxing/bin/windows-x64-cuda/
           cp build-cuda/bin/Release/*.dll ../moxing/bin/windows-x64-cuda/
           
-          # Vulkan
           cp build-vulkan/bin/Release/llama-server.exe ../moxing/bin/windows-x64-vulkan/
           cp build-vulkan/bin/Release/llama-cli.exe ../moxing/bin/windows-x64-vulkan/
           cp build-vulkan/bin/Release/llama-bench.exe ../moxing/bin/windows-x64-vulkan/
           cp build-vulkan/bin/Release/*.dll ../moxing/bin/windows-x64-vulkan/
           
-          # CPU
           cp build-cpu/bin/Release/llama-server.exe ../moxing/bin/windows-x64-cpu/
           cp build-cpu/bin/Release/llama-cli.exe ../moxing/bin/windows-x64-cpu/
           cp build-cpu/bin/Release/llama-bench.exe ../moxing/bin/windows-x64-cpu/
           cp build-cpu/bin/Release/*.dll ../moxing/bin/windows-x64-cpu/
       
-      - name: Package
-        run: |
-          $VERSION = python -c "import sys; sys.path.insert(0, '.'); from moxing import __version__; print(__version__)"
-          mkdir -p dist
-          cd moxing/bin
-          Compress-Archive -Path windows-x64-* -DestinationPath ../../../dist/windows-binaries-$VERSION.zip
-      
-      - uses: actions/upload-artifact@v4
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
         with:
           name: windows-binaries
-          path: dist/*.zip
+          path: moxing/bin/windows-x64-*
 
   build-macos:
     runs-on: macos-latest
@@ -287,33 +299,26 @@ jobs:
           
           cd build/llama.cpp
           
-          # Metal - 使用正确的路径
           find build-metal -name "llama-server" -exec cp {} ../moxing/bin/darwin-arm64-metal/ \;
           find build-metal -name "llama-cli" -exec cp {} ../moxing/bin/darwin-arm64-metal/ \;
           find build-metal -name "llama-bench" -exec cp {} ../moxing/bin/darwin-arm64-metal/ \;
           find build-metal -name "*.dylib" -exec cp {} ../moxing/bin/darwin-arm64-metal/ \;
           
-          # CPU
           find build-cpu -name "llama-server" -exec cp {} ../moxing/bin/darwin-arm64-cpu/ \;
           find build-cpu -name "llama-cli" -exec cp {} ../moxing/bin/darwin-arm64-cpu/ \;
           find build-cpu -name "llama-bench" -exec cp {} ../moxing/bin/darwin-arm64-cpu/ \;
           find build-cpu -name "*.dylib" -exec cp {} ../moxing/bin/darwin-arm64-cpu/ \;
       
-      - name: Package
-        run: |
-          VERSION=$(python -c "import sys; sys.path.insert(0, '.'); from moxing import __version__; print(__version__)")
-          mkdir -p dist
-          cd moxing/bin
-          tar -czf ../../../dist/macos-binaries-$VERSION.tar.gz darwin-*
-      
-      - uses: actions/upload-artifact@v4
+      - name: Upload macOS binaries
+        uses: actions/upload-artifact@v4
         with:
           name: macos-binaries
-          path: dist/*.tar.gz
+          path: moxing/bin/darwin-*
 
   build-wheel:
+    needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
-    name: Build Python Wheel
+    name: Build wheel with all binaries
     
     steps:
       - uses: actions/checkout@v4
@@ -322,19 +327,110 @@ jobs:
         with:
           python-version: '3.11'
       
-      - run: pip install build twine
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
       
-      - run: python -m build --wheel
+      - name: Organize binaries
+        run: |
+          mkdir -p moxing/bin
+          
+          # Copy Linux
+          if [ -d artifacts/linux-binaries ]; then
+            cp -r artifacts/linux-binaries/* moxing/bin/
+          fi
+          
+          # Copy Windows
+          if [ -d artifacts/windows-binaries ]; then
+            cp -r artifacts/windows-binaries/* moxing/bin/
+          fi
+          
+          # Copy macOS
+          if [ -d artifacts/macos-binaries ]; then
+            cp -r artifacts/macos-binaries/* moxing/bin/
+          fi
+          
+          echo "Binary structure:"
+          find moxing/bin -type d | sort
+          
+          echo ""
+          echo "Total files:"
+          find moxing/bin -type f | wc -l
+          
+          echo ""
+          echo "Total size:"
+          du -sh moxing/bin
+      
+      - name: Install build tools
+        run: |
+          pip install --upgrade pip build twine
+      
+      - name: Build wheel with binaries
+        run: |
+          # Include binaries in wheel
+          cat > MANIFEST.in << 'EOF'
+          include README.md
+          include pyproject.toml
+          include LICENSE
+          recursive-include moxing *.py
+          recursive-include moxing/bin *
+          EOF
+          
+          python -m build --wheel
+      
+      - name: Check wheel
+        run: |
+          echo "Built wheel:"
+          ls -lh dist/
+          
+          WHEEL=$(ls dist/*.whl | head -1)
+          SIZE=$(stat -c%s "$WHEEL")
+          SIZE_MB=$((SIZE / 1024 / 1024))
+          
+          echo ""
+          echo "Wheel: $(basename $WHEEL)"
+          echo "Size: $SIZE_MB MB"
+          
+          # Verify it contains binaries
+          echo ""
+          echo "Binary check:"
+          unzip -l "$WHEEL" | grep -E "moxing/bin" | head -10
       
       - uses: actions/upload-artifact@v4
         with:
-          name: python-wheel
+          name: wheel
           path: dist/*.whl
 
+  test-wheel:
+    needs: build-wheel
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install wheel
+        run: pip install dist/*.whl
+      
+      - name: Test import
+        run: |
+          python -c "import moxing; print(f'MoXing version: {moxing.__version__}')"
+          python -c "from moxing.binaries import BinaryManager, PlatformDetector"
+          moxing --version
+
   release:
+    needs: [build-wheel, test-wheel]
     runs-on: ubuntu-latest
-    name: Create Release
-    needs: [build-linux, build-windows, build-macos, build-wheel]
     if: startsWith(github.ref, 'refs/tags/')
     
     steps:
@@ -343,28 +439,40 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-          merge-multiple: true
+      
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          cp artifacts/wheel/*.whl release/
+          cp artifacts/linux-binaries/* release/ || true
+          cp artifacts/windows-binaries/* release/ || true
+          cp artifacts/macos-binaries/* release/ || true
+          
+          echo "Release files:"
+          ls -lh release/
       
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*
-          name: MoXing v${{ github.ref_name }}
+          files: release/*
+          name: MoXing ${{ github.ref_name }}
           body: |
             ## MoXing ${{ github.ref_name }}
             
-            ### Linux Binaries
-            - CUDA 12.6 (NVIDIA GPU)
-            - Vulkan (Cross-platform GPU)
-            - CPU (Fallback)
+            ### GPU Backends (完整构建)
+            - **CUDA 13.2** - NVIDIA 最新版 (SM 89/90)
+            - **ROCm 7.1** - AMD RX 7900 XTX (gfx1100)
+            - **Vulkan** - 跨平台 GPU
+            - **Metal** - Apple Silicon
             
-            ### Windows Binaries
-            - CUDA 12.6 (NVIDIA GPU)
-            - Vulkan (Cross-platform GPU)
-            - CPU (Fallback)
+            ### 安装
+            ```bash
+            pip install moxing
+            ```
             
-            ### macOS Binaries
-            - Metal (Apple Silicon GPU)
-            - CPU (Intel/Apple Silicon)
+            ### LAN 访问
+            ```bash
+            moxing serve model.gguf --host 0.0.0.0
+            ```
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
