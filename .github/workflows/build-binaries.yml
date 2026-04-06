@@ -172,10 +172,12 @@ jobs:
         run: |
           mkdir -p moxing/bin/darwin-arm64-{metal,cpu}
           cd build/llama.cpp
-          find build-metal -name "llama-*" -type f -executable -exec cp {} ../moxing/bin/darwin-arm64-metal/ \; 2>/dev/null || true
-          find build-metal -name "*.dylib" -exec cp {} ../moxing/bin/darwin-arm64-metal/ \; 2>/dev/null || true
-          find build-cpu -name "llama-*" -type f -executable -exec cp {} ../moxing/bin/darwin-arm64-cpu/ \; 2>/dev/null || true
-          find build-cpu -name "*.dylib" -exec cp {} ../moxing/bin/darwin-arm64-cpu/ \; 2>/dev/null || true
+          for backend in metal cpu; do
+            mkdir -p ../moxing/bin/darwin-arm64-$backend
+            cp build-$backend/bin/llama-* ../moxing/bin/darwin-arm64-$backend/ 2>/dev/null || true
+            cp build-$backend/*.dylib ../moxing/bin/darwin-arm64-$backend/ 2>/dev/null || true
+          done
+          ls -lh ../moxing/bin/darwin-*/
       
       - uses: actions/upload-artifact@v4
         with:
