@@ -2,4 +2,4 @@ include README.md
 include pyproject.toml
 include LICENSE
 recursive-include moxing *.py
-recursive-include moxing/bin *
+recursive-exclude moxing/bin *
