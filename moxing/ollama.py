@@ -7,6 +7,7 @@ List and use models from local Ollama installation.
 import json
 import os
 import re
+import socket
 import struct
 import subprocess
 import sys
@@ -38,6 +39,18 @@ else:
     OLLAMA_MODELS_DIRS.append(OLLAMA_SYSTEM_MODELS_DIR)
 
 
+def _check_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
+    """Check if a port is open with reliable timeout."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        return result == 0
+    except Exception:
+        return False
+
+
 @dataclass
 class OllamaModel:
     """Represents a model in Ollama."""
@@ -50,6 +63,9 @@ class OllamaModel:
     family: Optional[str] = None
     context_length: Optional[int] = None
     architecture: Optional[str] = None
+    parameter_size: Optional[str] = None
+    quantization_level: Optional[str] = None
+    format: Optional[str] = None
     
     @property
     def size_gb(self) -> float:
@@ -60,10 +76,23 @@ class OllamaModel:
         if self.tag and self.tag != "latest":
             return f"{self.name}:{self.tag}"
         return self.name
+    
+    @property
+    def context_str(self) -> str:
+        if not self.context_length:
+            return "-"
+        if self.context_length >= 1024 * 100:
+            return f"{self.context_length // 1024}K"
+        elif self.context_length >= 1024:
+            return f"{self.context_length // 1024}K"
+        return str(self.context_length)
 
 
 def read_gguf_context_length(gguf_path: str) -> Tuple[Optional[int], Optional[str]]:
     """Read context length and architecture from GGUF file metadata.
+    
+    Optimized version that reads only the first 32KB of metadata to avoid
+    memory issues with large GGUF files.
     
     Args:
         gguf_path: Path to GGUF file
@@ -84,53 +113,120 @@ def read_gguf_context_length(gguf_path: str) -> Tuple[Optional[int], Optional[st
             tensor_count = struct.unpack('<Q', f.read(8))[0]
             metadata_kv_count = struct.unpack('<Q', f.read(8))[0]
             
-            for _ in range(min(metadata_kv_count, 200)):
-                key_len = struct.unpack('<Q', f.read(8))[0]
-                key = f.read(key_len).decode('utf-8')
-                value_type = struct.unpack('<I', f.read(4))[0]
+            bytes_read = 20
+            max_bytes = 32768
+            
+            for i in range(min(metadata_kv_count, 30)):
+                if bytes_read > max_bytes:
+                    break
+                
+                key_len_data = f.read(8)
+                if len(key_len_data) < 8:
+                    break
+                key_len = struct.unpack('<Q', key_len_data)[0]
+                
+                if key_len > 256:
+                    f.seek(key_len, 1)
+                    bytes_read += 8 + key_len
+                    value_type_data = f.read(4)
+                    if len(value_type_data) < 4:
+                        break
+                    value_type = struct.unpack('<I', value_type_data)[0]
+                    bytes_read += 4
+                    if value_type == 8:
+                        str_len_data = f.read(8)
+                        if len(str_len_data) >= 8:
+                            str_len = struct.unpack('<Q', str_len_data)[0]
+                            f.seek(str_len, 1)
+                            bytes_read += 8 + str_len
+                    elif value_type == 9:
+                        arr_type_data = f.read(4)
+                        arr_len_data = f.read(8)
+                        if len(arr_type_data) >= 4 and len(arr_len_data) >= 8:
+                            arr_type = struct.unpack('<I', arr_type_data)[0]
+                            arr_len = struct.unpack('<Q', arr_len_data)[0]
+                            bytes_read += 12
+                            f.seek(arr_len * 4, 1)
+                            bytes_read += arr_len * 4
+                    continue
+                
+                key_data = f.read(key_len)
+                if len(key_data) < key_len:
+                    break
+                key = key_data.decode('utf-8', errors='replace')
+                bytes_read += 8 + key_len
+                
+                value_type_data = f.read(4)
+                if len(value_type_data) < 4:
+                    break
+                value_type = struct.unpack('<I', value_type_data)[0]
+                bytes_read += 4
                 
                 value = None
                 
-                if value_type == 0:
-                    value = struct.unpack('<B', f.read(1))[0]
-                elif value_type == 1:
-                    value = struct.unpack('<b', f.read(1))[0]
-                elif value_type == 2:
-                    value = struct.unpack('<H', f.read(2))[0]
-                elif value_type == 3:
-                    value = struct.unpack('<h', f.read(2))[0]
-                elif value_type == 4:
-                    value = struct.unpack('<I', f.read(4))[0]
-                elif value_type == 5:
-                    value = struct.unpack('<i', f.read(4))[0]
-                elif value_type == 6:
-                    value = struct.unpack('<f', f.read(4))[0]
-                elif value_type == 7:
-                    value = struct.unpack('<?', f.read(1))[0]
+                if value_type in [0, 1, 7]:
+                    data = f.read(1)
+                    if len(data) >= 1:
+                        if value_type == 7:
+                            value = struct.unpack('<?', data)[0]
+                        else:
+                            value = struct.unpack('<B', data)[0]
+                    bytes_read += 1
+                elif value_type in [2, 3]:
+                    data = f.read(2)
+                    if len(data) >= 2:
+                        value = struct.unpack('<H', data)[0]
+                    bytes_read += 2
+                elif value_type in [4, 5, 6]:
+                    data = f.read(4)
+                    if len(data) >= 4:
+                        value = struct.unpack('<I', data)[0]
+                    bytes_read += 4
                 elif value_type == 8:
-                    str_len = struct.unpack('<Q', f.read(8))[0]
-                    value = f.read(str_len).decode('utf-8', errors='replace')
+                    str_len_data = f.read(8)
+                    if len(str_len_data) < 8:
+                        break
+                    str_len = struct.unpack('<Q', str_len_data)[0]
+                    if str_len > 256:
+                        f.seek(str_len, 1)
+                    else:
+                        value = f.read(str_len).decode('utf-8', errors='replace')
+                    bytes_read += 8 + str_len
                 elif value_type == 9:
-                    arr_type = struct.unpack('<I', f.read(4))[0]
-                    arr_len = struct.unpack('<Q', f.read(8))[0]
-                    for _ in range(min(arr_len, 1000)):
-                        if arr_type in [0, 1]:
-                            f.read(1)
-                        elif arr_type in [2, 3]:
-                            f.read(2)
-                        elif arr_type in [4, 5, 6]:
-                            f.read(4)
-                        elif arr_type == 7:
-                            f.read(1)
-                        elif arr_type == 8:
-                            slen = struct.unpack('<Q', f.read(8))[0]
-                            f.read(slen)
+                    arr_type_data = f.read(4)
+                    arr_len_data = f.read(8)
+                    if len(arr_type_data) < 4 or len(arr_len_data) < 8:
+                        break
+                    arr_type = struct.unpack('<I', arr_type_data)[0]
+                    arr_len = struct.unpack('<Q', arr_len_data)[0]
+                    bytes_read += 12
+                    
+                    if arr_len > 10:
+                        f.seek(arr_len * 8, 1)
+                        bytes_read += arr_len * 8
+                    else:
+                        for _ in range(arr_len):
+                            if arr_type in [0, 1, 7]:
+                                f.read(1)
+                                bytes_read += 1
+                            elif arr_type in [2, 3]:
+                                f.read(2)
+                                bytes_read += 2
+                            elif arr_type in [4, 5, 6]:
+                                f.read(4)
+                                bytes_read += 4
                 
-                if 'context_length' in key.lower() and value is not None:
+                if 'context_length' in key.lower() and value is not None and isinstance(value, int):
                     context_length = value
+                    if architecture:
+                        return context_length, architecture
                 if key == 'general.architecture' and value is not None:
                     architecture = value
+                    if context_length:
+                        return context_length, architecture
                     
+    except (MemoryError, OSError, struct.error):
+        pass
     except Exception:
         pass
     
@@ -150,16 +246,25 @@ class OllamaClient:
             return bool(self._available)
         
         try:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.api_url)
+            host = parsed.hostname or "localhost"
+            port = parsed.port or 11434
+            
+            if not _check_port_open(host, port, timeout=1.0):
+                self._available = False
+                return False
+            
             req = Request(f"{self.api_url}/api/tags", method="GET")
             with urlopen(req, timeout=2) as resp:
                 self._available = resp.status == 200
                 return bool(self._available)
-        except:
+        except Exception:
             self._available = False
             return False
     
     def list_models(self) -> List[OllamaModel]:
-        """List all models from Ollama."""
+        """List all models from Ollama with detailed information."""
         models = []
         
         if self.is_available():
@@ -176,15 +281,46 @@ class OllamaClient:
                         base_name = name
                         tag = "latest"
                     
-                    models.append(OllamaModel(
+                    details = m.get("details", {})
+                    
+                    model = OllamaModel(
                         name=base_name,
                         tag=tag,
                         id=m.get("digest", "")[:12],
                         size=m.get("size", 0),
                         modified=m.get("modified_at", ""),
                         digest=m.get("digest"),
-                        family=m.get("details", {}).get("family")
-                    ))
+                        family=details.get("family"),
+                        parameter_size=details.get("parameter_size"),
+                        quantization_level=details.get("quantization_level"),
+                        format=details.get("format"),
+                    )
+                    
+                    try:
+                        info = self.get_model_info(name)
+                        if info:
+                            model_info_details = info.get("details", {})
+                            if not model.parameter_size:
+                                model.parameter_size = model_info_details.get("parameter_size")
+                            if not model.quantization_level:
+                                model.quantization_level = model_info_details.get("quantization_level")
+                            if not model.format:
+                                model.format = model_info_details.get("format")
+                            
+                            modelfile = info.get("modelfile", "")
+                            if modelfile:
+                                for line in modelfile.split("\n"):
+                                    line_lower = line.lower()
+                                    if line_lower.strip().startswith("parameter ") and "num_ctx" in line_lower:
+                                        try:
+                                            ctx_val = int(line.split()[-1])
+                                            model.context_length = ctx_val
+                                        except ValueError:
+                                            pass
+                    except Exception:
+                        pass
+                    
+                    models.append(model)
             except Exception as e:
                 console.print(f"[yellow]Warning: Could not get models from Ollama API: {e}[/yellow]")
         
@@ -262,15 +398,23 @@ class OllamaClient:
     def get_model_info(self, name: str) -> Optional[Dict[str, Any]]:
         """Get detailed info about a model."""
         try:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.api_url)
+            host = parsed.hostname or "localhost"
+            port = parsed.port or 11434
+            
+            if not _check_port_open(host, port, timeout=1.0):
+                return None
+            
             req = Request(
                 f"{self.api_url}/api/show",
                 data=json.dumps({"name": name}).encode(),
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urlopen(req, timeout=10) as resp:
+            with urlopen(req, timeout=5) as resp:
                 return json.loads(resp.read().decode())
-        except:
+        except Exception:
             return None
     
     def get_model_path(self, name: str) -> Optional[Path]:
@@ -428,7 +572,7 @@ def list_ollama_models() -> List[OllamaModel]:
 def print_ollama_models(models: Optional[List[OllamaModel]] = None, 
                         show_embeddings: bool = True,
                         show_context: bool = True):
-    """Print a table of Ollama models."""
+    """Print a table of Ollama models with detailed information from Ollama API."""
     if models is None:
         models = list_ollama_models()
     
@@ -441,13 +585,14 @@ def print_ollama_models(models: Optional[List[OllamaModel]] = None,
         client = OllamaClient()
         models = [m for m in models if not client.is_embedding_model(m.full_name)]
     
-    table = Table(title=f"Ollama Models ({len(models)} total)")
-    table.add_column("Name", style="cyan", no_wrap=True)
-    table.add_column("Size", style="green")
+    table = Table(title=f"Ollama Models ({len(models)} total)", expand=True)
+    table.add_column("Name", style="cyan")
+    table.add_column("Size", style="green", justify="right")
     if show_context:
-        table.add_column("Context", style="magenta")
-    table.add_column("Type", style="yellow")
-    table.add_column("ID", style="dim")
+        table.add_column("Context", style="magenta", justify="right")
+    table.add_column("Params", style="blue", justify="right")
+    table.add_column("Quant", style="yellow")
+    table.add_column("Type", style="dim")
     
     client = OllamaClient()
     
@@ -455,39 +600,64 @@ def print_ollama_models(models: Optional[List[OllamaModel]] = None,
         is_embed = client.is_embedding_model(m.full_name)
         model_type = "embedding" if is_embed else "llm"
         
-        ctx_str = "-"
-        if show_context and not is_embed:
-            is_accessible, gguf_path, _ = client.check_model_access(m.full_name)
-            if is_accessible and gguf_path:
-                try:
-                    ctx_len, arch = read_gguf_context_length(str(gguf_path))
-                    if ctx_len:
-                        if ctx_len >= 1024 * 100:
-                            ctx_str = f"{ctx_len // 1024}K"
-                        elif ctx_len >= 1024:
-                            ctx_str = f"{ctx_len // 1024}K"
-                        else:
-                            ctx_str = str(ctx_len)
-                except:
-                    pass
+        if m.size_gb >= 1:
+            size_str = f"{m.size_gb:.1f}GB"
+        else:
+            size_str = f"{int(m.size / (1024**2))}MB"
+        
+        params_str = format_parameter_size(m.parameter_size)
+        quant_str = m.quantization_level or "-"
+        
+        row = [m.full_name, size_str]
         
         if show_context:
-            table.add_row(
-                m.full_name,
-                f"{m.size_gb:.1f} GB" if m.size_gb >= 1 else f"{m.size / (1024**2):.0f} MB",
-                ctx_str,
-                model_type,
-                m.id[:8] if m.id else "-"
-            )
-        else:
-            table.add_row(
-                m.full_name,
-                f"{m.size_gb:.1f} GB" if m.size_gb >= 1 else f"{m.size / (1024**2):.0f} MB",
-                model_type,
-                m.id[:8] if m.id else "-"
-            )
+            row.append(m.context_str)
+        
+        row.extend([params_str, quant_str, model_type])
+        
+        table.add_row(*row)
     
     console.print(table)
+
+
+def format_parameter_size(param_str: Optional[str]) -> str:
+    """Format parameter size string to compact representation.
+    
+    Examples:
+        '31.3B' -> '31B'
+        '4.3B' -> '4B'
+        '334.0M' -> '334M'
+        '999.8M' -> '1B'
+        '33M' -> '33M'
+        '30.15M' -> '30M'
+    """
+    if not param_str:
+        return "-"
+    
+    param_str = param_str.strip()
+    
+    if param_str.endswith('B'):
+        try:
+            val = float(param_str[:-1])
+            if val >= 1000:
+                return f"{int(val)}B"
+            elif val >= 1:
+                return f"{int(round(val))}B"
+            else:
+                return f"{int(round(val * 1000))}M"
+        except ValueError:
+            return param_str
+    elif param_str.endswith('M'):
+        try:
+            val = float(param_str[:-1])
+            if val >= 950:
+                return f"{int(round(val / 1000))}B"
+            else:
+                return f"{int(round(val))}M"
+        except ValueError:
+            return param_str
+    else:
+        return param_str
 
 
 def get_ollama_model(name: str) -> Optional[OllamaModel]:

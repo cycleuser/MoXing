@@ -1536,7 +1536,11 @@ def ollama_list(
                 "size": m.size,
                 "size_gb": round(m.size_gb, 2),
                 "id": m.id,
-                "modified": m.modified
+                "modified": m.modified,
+                "family": m.family,
+                "parameter_size": m.parameter_size,
+                "quantization": m.quantization_level,
+                "context_length": m.context_length,
             }
             for m in models
         ]
@@ -1658,59 +1662,194 @@ def serve_with_ollama_backend(
     ctx_size: int = 4096,
     device: str = "auto",
     backend: str = "auto",
+    verbose: bool = False,
+    gguf_path: Optional[Path] = None,
 ):
-    """Serve a model using Ollama's backend (for models requiring Ollama patches)."""
+    """Serve a model using system Ollama with device/backend selection.
+    
+    For Ollama-specific architectures (like gemma4), uses system Ollama
+    which has the native runner with custom patches.
+    """
     import subprocess
     import time
-    import signal
+    import os
+    import shutil
+    import socket
+    from pathlib import Path
     from moxing.server import find_available_port, is_port_in_use
+    from moxing.device import DeviceDetector, BackendType
     
-    ollama_port = 11434
+    ollama_bin = shutil.which("ollama")
+    if not ollama_bin:
+        console.print(f"[red]Ollama not found in PATH[/red]")
+        console.print(f"[yellow]Install Ollama: https://ollama.ai[/yellow]")
+        raise typer.Exit(1)
     
-    console.print(Panel(
-        f"[green]Model:[/green] {model}\n"
-        f"[blue]Backend:[/blue] Ollama (patched llama.cpp)\n"
-        f"[yellow]Port:[/yellow] {port}\n"
-        f"[cyan]API:[/cyan] OpenAI compatible at http://{host}:{port}/v1",
-        title="Ollama Backend"
-    ))
+    detector = DeviceDetector()
+    detector.detect()
     
-    console.print("[blue]Starting Ollama service...[/blue]")
+    env = os.environ.copy()
+    backend_str = backend.upper() if backend != "auto" else "AUTO"
+    device_str = device if device != "auto" else "auto"
+    gpu_idx = None
     
-    result = subprocess.run(
-        ["ollama", "serve"],
-        capture_output=True,
-        text=True,
-        start_new_session=True
-    )
+    if backend == "cuda":
+        env["OLLAMA_LLM_LIBRARY"] = "cuda_v12"
+        backend_str = "CUDA"
+    elif backend == "rocm":
+        env["OLLAMA_LLM_LIBRARY"] = "rocm"
+        backend_str = "ROCm"
+    elif backend == "vulkan":
+        env["OLLAMA_VULKAN"] = "1"
+        backend_str = "Vulkan"
+    elif backend == "cpu":
+        env["OLLAMA_LLM_LIBRARY"] = "cpu"
+        backend_str = "CPU"
+    elif backend == "auto":
+        if device.startswith("gpu") and len(device) > 4:
+            try:
+                gpu_idx = int(device[4:])
+                dev_info = detector.get_device_by_index(gpu_idx)
+                if dev_info:
+                    if dev_info.backend == BackendType.CUDA:
+                        env["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
+                        backend_str = "CUDA"
+                    elif dev_info.backend == BackendType.ROCM:
+                        env["HIP_VISIBLE_DEVICES"] = str(gpu_idx)
+                        env["OLLAMA_LLM_LIBRARY"] = "rocm"
+                        backend_str = "ROCm"
+                    elif dev_info.backend == BackendType.VULKAN:
+                        env["OLLAMA_VULKAN"] = "1"
+                        backend_str = "Vulkan"
+                    device_str = f"GPU {gpu_idx} ({dev_info.name})"
+            except ValueError:
+                pass
     
-    time.sleep(2)
+    if device.startswith("gpu") and len(device) > 4 and gpu_idx is None:
+        try:
+            gpu_idx = int(device[4:])
+            if backend == "cuda":
+                env["CUDA_VISIBLE_DEVICES"] = str(gpu_idx)
+            elif backend == "rocm":
+                env["HIP_VISIBLE_DEVICES"] = str(gpu_idx)
+            device_str = f"GPU {gpu_idx}"
+        except ValueError:
+            pass
     
-    console.print("[blue]Loading model in Ollama...[/blue]")
+    if gpu_idx is not None:
+        try:
+            dev_info = detector.get_device_by_index(gpu_idx)
+            if dev_info:
+                device_str = f"GPU {gpu_idx} ({dev_info.name})"
+        except:
+            pass
+    
+    ollama_running = False
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(("127.0.0.1", 11434))
+        sock.close()
+        ollama_running = result == 0
+    except:
+        pass
+    
+    ollama_process = None
+    
+    if not ollama_running:
+        console.print(Panel(
+            f"[green]Model:[/green] {model}\n"
+            f"[blue]Backend:[/blue] {backend_str}\n"
+            f"[cyan]Device:[/cyan] {device_str}\n"
+            f"[yellow]Port:[/yellow] 11434",
+            title="Ollama Backend"
+        ))
+        
+        if verbose:
+            console.print(f"[dim]Environment variables:[/dim]")
+            for key in ["OLLAMA_LLM_LIBRARY", "CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "OLLAMA_VULKAN"]:
+                if key in env:
+                    console.print(f"[dim]  {key}={env[key]}[/dim]")
+        
+        console.print(f"[blue]Starting Ollama service...[/blue]")
+        
+        ollama_process = subprocess.Popen(
+            [ollama_bin, "serve"],
+            env=env,
+            stdout=None if verbose else subprocess.DEVNULL,
+            stderr=None if verbose else subprocess.DEVNULL,
+            start_new_session=True
+        )
+        
+        for _ in range(20):
+            time.sleep(1)
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex(("127.0.0.1", 11434))
+                sock.close()
+                if result == 0:
+                    break
+            except:
+                pass
+            if ollama_process.poll() is not None:
+                console.print(f"[red]Ollama failed to start[/red]")
+                raise typer.Exit(1)
+    else:
+        console.print(Panel(
+            f"[green]Model:[/green] {model}\n"
+            f"[blue]Backend:[/blue] {backend_str}\n"
+            f"[cyan]Device:[/cyan] {device_str}\n"
+            f"[yellow]Port:[/yellow] 11434\n"
+            f"[dim]Using existing Ollama service[/dim]",
+            title="Ollama Backend"
+        ))
+        
+        if verbose:
+            console.print(f"[dim]Environment variables for model loading:[/dim]")
+            for key in ["OLLAMA_LLM_LIBRARY", "CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "OLLAMA_VULKAN"]:
+                if key in env:
+                    console.print(f"[dim]  {key}={env[key]}[/dim]")
+    
+    console.print(f"[blue]Loading model {model}...[/blue]")
     
     load_result = subprocess.run(
-        ["ollama", "run", model, "--keepalive", "24h"],
+        [ollama_bin, "run", model, "--keepalive", "24h"],
+        env=env,
         capture_output=True,
         text=True,
-        timeout=60
+        timeout=300
     )
     
+    if load_result.returncode != 0:
+        console.print(f"[red]Failed to load model[/red]")
+        if load_result.stderr:
+            console.print(f"[dim]{load_result.stderr[:500]}[/dim]")
+        raise typer.Exit(1)
+    
     console.print(Panel(
-        f"[green]Ollama API:[/green] http://127.0.0.1:{ollama_port}/api\n"
-        f"[green]OpenAI API:[/green] http://127.0.0.1:{ollama_port}/v1\n"
+        f"[green]Ollama API:[/green] http://127.0.0.1:11434/api\n"
+        f"[green]OpenAI API:[/green] http://127.0.0.1:11434/v1\n"
         f"[yellow]Press Ctrl+C to stop[/yellow]",
-        title=f"Ollama: {model}"
+        title=f"Running: {model}"
     ))
     
-    console.print(f"\n[dim]This model uses Ollama's patched backend with architecture support.[/dim]")
-    console.print(f"[dim]Ollama is running on port {ollama_port}[/dim]")
+    console.print(f"[dim]Backend: {backend_str}, Device: {device_str}[/dim]")
     
     try:
-        import httpx
         while True:
             time.sleep(1)
+            if ollama_process and ollama_process.poll() is not None:
+                console.print(f"[red]Ollama exited with code {ollama_process.returncode}[/red]")
+                break
     except KeyboardInterrupt:
-        console.print("\n[yellow]Stopping Ollama service...[/yellow]")
+        console.print("\n[yellow]Stopping...[/yellow]")
+        if ollama_process:
+            ollama_process.terminate()
+            try:
+                ollama_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                ollama_process.kill()
     
     raise typer.Exit(0)
 
@@ -1736,348 +1875,40 @@ def ollama_serve_impl(
     ubatch_size: int = 512,
     flash_attn: bool = True,
 ):
-    """Implementation of ollama serve with device/backend selection."""
+    """Serve an Ollama model using Ollama backend.
+    
+    For Ollama models (e.g., gemma4, llama3.3), use Ollama's patched backend.
+    For direct GGUF files, use 'moxing serve <gguf_file>' instead.
+    """
     from moxing.ollama import OllamaClient, get_ollama_model
-    from moxing.server import LlamaServer, find_available_port, is_port_in_use
-    from moxing.device import DeviceDetector, BackendType
+    from moxing.device import DeviceDetector
     
-    if port == 0 or auto_port or is_port_in_use(port, host):
-        original_port = port if port > 0 else 8080
-        port = find_available_port(original_port)
-        if port != original_port:
-            console.print(f"[yellow]Port {original_port} in use, using port {port}[/yellow]")
-    
-    if verbose:
-        console.print(f"[dim]Looking up model: {model}[/dim]")
-        console.print(f"[dim]Using port: {port}[/dim]")
+    console.print(f"[blue]Looking up model: {model}[/blue]")
     
     client = OllamaClient()
-    
     ollama_model = get_ollama_model(model)
+    
     if not ollama_model:
         console.print(f"[red]Model not found: {model}[/red]")
-        console.print("[yellow]Available models:[/yellow]")
+        console.print("[yellow]Available Ollama models:[/yellow]")
         models = client.list_models()
         for m in models[:10]:
-            console.print(f"  • {m.full_name}")
+            console.print(f"  • {m.full_name} ({m.size_gb:.1f}GB)")
         if len(models) > 10:
             console.print(f"  ... and {len(models) - 10} more")
         console.print("\n[dim]Run 'moxing ollama list' to see all models[/dim]")
+        console.print(f"[dim]For GGUF files, use: moxing serve <gguf_file>[/dim]")
         raise typer.Exit(1)
     
-    if verbose:
-        console.print(f"[dim]Found model: {ollama_model.full_name} ({ollama_model.size_gb:.1f} GB)[/dim]")
-    
-    is_accessible, gguf_path, message = client.check_model_access(model)
-    
-    if verbose:
-        console.print(f"[dim]Model accessible: {is_accessible}[/dim]")
-        if gguf_path:
-            console.print(f"[dim]GGUF path: {gguf_path}[/dim]")
-    
-    if not is_accessible:
-        console.print(f"[red]Cannot access model '{model}':[/red]")
-        console.print(message)
-        raise typer.Exit(1)
-    
-    if skip_check:
-        console.print("[yellow]Skipping compatibility check (--skip-check)[/yellow]")
-    else:
-        if verbose:
-            console.print(f"[dim]Calling _get_compatible_gguf...[/dim]")
-        
-        try:
-            gguf_path = _get_compatible_gguf(model, gguf_path, ollama_model.size_gb, verbose)
-        except UnsupportedArchitectureError as e:
-            console.print(f"\n[yellow]Model architecture requires Ollama backend[/yellow]")
-            console.print(f"[dim]{e}[/dim]")
-            console.print(f"[blue]Switching to Ollama service...[/blue]")
-            return serve_with_ollama_backend(model, port, host, ctx_size, device, backend)
-        except Exception as e:
-            console.print(f"[red]Error in compatibility check: {e}[/red]")
-            import traceback
-            console.print(f"[dim]{traceback.format_exc()}[/dim]")
-            raise typer.Exit(1)
-        
-        if verbose:
-            console.print(f"[dim]_get_compatible_gguf returned: {gguf_path}[/dim]")
-        
-        if not gguf_path:
-            console.print(f"[red]Failed to get compatible GGUF[/red]")
-            raise typer.Exit(1)
+    console.print(f"[green]Found model: {ollama_model.full_name} ({ollama_model.size_gb:.1f} GB)[/green]")
     
     detector = DeviceDetector()
     detector.detect()
     
-    if device != "auto":
-        device_config = detector.get_device_config_by_name(device, backend, ollama_model.size_gb)
-    elif backend != "auto":
-        try:
-            backend_type = BackendType(backend.lower())
-            device_config = detector.get_best_device(ollama_model.size_gb)
-            device_config.backend = backend_type
-        except ValueError:
-            console.print(f"[red]Unknown backend: {backend}[/red]")
-            raise typer.Exit(1)
-    else:
-        device_config = detector.get_best_device(ollama_model.size_gb)
+    if ctx_size != 4096:
+        console.print(f"[dim]Note: Ollama manages context size automatically. Use -c for llama.cpp backend.[/dim]")
     
-    has_amd_perm, amd_perm_msg = detector.check_amd_permission()
-    
-    if device_config.backend == BackendType.ROCM and not has_amd_perm:
-        console.print(f"\n[yellow bold]AMD ROCm Permission Issue[/yellow bold]")
-        console.print(f"[yellow]{amd_perm_msg}[/yellow]")
-        console.print(f"\n[blue]Switching to Vulkan backend for AMD GPU...[/blue]")
-        console.print(f"[dim]ROCm requires: sudo usermod -aG render \"$USER\"[/dim]")
-        console.print(f"[dim]After adding group, log out and log back in.[/dim]\n")
-        
-        device_config.backend = BackendType.VULKAN
-    
-    is_cpu = device_config.backend == BackendType.CPU
-    
-    available_vram_gb = 0
-    if not is_cpu:
-        if device_config.device.memory_mb > 0:
-            available_vram_gb = device_config.device.free_memory_gb * 0.85
-        else:
-            if device_config.backend == BackendType.ROCM:
-                if "7900" in device_config.device.name:
-                    available_vram_gb = 24 * 0.85
-                elif "610M" in device_config.device.name:
-                    available_vram_gb = 0.5
-                else:
-                    available_vram_gb = 8.0
-            elif device_config.backend == BackendType.CUDA:
-                available_vram_gb = 8.0
-            elif device_config.backend in [BackendType.METAL, BackendType.MLX, BackendType.MPS]:
-                available_vram_gb = 12.0
-            else:
-                available_vram_gb = 4.0
-    
-    model_size_gb = ollama_model.size_gb
-    
-    total_layers = 40
-    if model_size_gb > 30:
-        total_layers = 80
-    elif model_size_gb > 15:
-        total_layers = 60
-    elif model_size_gb > 8:
-        total_layers = 40
-    else:
-        total_layers = 32
-    
-    n_gpu_layers = -1 if not is_cpu else 0
-    actual_cpu_offload = cpu_offload
-    
-    if not is_cpu and available_vram_gb > 0:
-        offload_plan = detector.calculate_offload_plan(
-            device_config.device,
-            model_size_gb,
-            ctx_size,
-            total_layers
-        )
-        
-        if offload_plan.needs_offload:
-            console.print(f"\n[yellow]Warning: Model ({model_size_gb:.1f}GB) may not fit entirely in VRAM ({available_vram_gb:.1f}GB)[/yellow]")
-            
-            if cpu_offload == 0:
-                if prompt_offload:
-                    from rich.prompt import Confirm
-                    console.print(f"[yellow]Suggested: offload {offload_plan.suggested_cpu_layers} layers to CPU[/yellow]")
-                    try:
-                        if Confirm.ask("Enable CPU offload?", default=True):
-                            actual_cpu_offload = offload_plan.suggested_cpu_layers
-                            n_gpu_layers = offload_plan.gpu_layers
-                            console.print(f"[blue]Will offload {actual_cpu_offload} layers to CPU[/blue]\n")
-                        else:
-                            console.print("[yellow]Proceeding without CPU offload (may fail if VRAM insufficient)[/yellow]\n")
-                    except:
-                        actual_cpu_offload = offload_plan.suggested_cpu_layers
-                        n_gpu_layers = offload_plan.gpu_layers
-                else:
-                    actual_cpu_offload = offload_plan.suggested_cpu_layers
-                    n_gpu_layers = offload_plan.gpu_layers
-                    console.print(f"[blue]Auto offloading {actual_cpu_offload}/{total_layers} layers to CPU[/blue]")
-                    console.print(f"[dim]Use --cpu-offload N to customize, or --prompt-offload to be asked[/dim]\n")
-            else:
-                actual_cpu_offload = cpu_offload
-                n_gpu_layers = total_layers - cpu_offload
-                if n_gpu_layers < 1:
-                    n_gpu_layers = 1
-                    actual_cpu_offload = total_layers - 1
-        else:
-            console.print(f"[green]Model fits in VRAM: {model_size_gb:.1f}GB < {available_vram_gb:.1f}GB[/green]")
-    elif cpu_offload > 0 and not is_cpu:
-        n_gpu_layers = total_layers - cpu_offload
-        if n_gpu_layers < 0:
-            n_gpu_layers = 0
-        actual_cpu_offload = cpu_offload
-    
-    device_str = "auto"
-    if not is_cpu:
-        if device_config.backend == BackendType.ROCM:
-            device_str = "auto"
-            console.print("[dim]Using auto ROCm device selection[/dim]")
-        elif device_config.backend == BackendType.VULKAN:
-            device_str = "auto"
-            console.print("[dim]Using auto Vulkan device selection[/dim]")
-        elif device_config.backend in [BackendType.METAL, BackendType.MLX, BackendType.MPS]:
-            device_str = f"MTL{device_config.device.index}"
-        elif device_config.backend == BackendType.CUDA:
-            device_str = f"CUDA{device_config.device.index}"
-        else:
-            device_str = "auto"
-    
-    gpu_layers_display = "0 (CPU)" if is_cpu else (f"{n_gpu_layers}" if n_gpu_layers > 0 else "all")
-    if actual_cpu_offload > 0 and not is_cpu:
-        gpu_layers_display = f"{n_gpu_layers}/{total_layers} (CPU: {actual_cpu_offload})"
-    
-    device_display = device_config.device.name
-    backend_display = device_config.backend.value.upper()
-    model_short = ollama_model.full_name[:20]
-    server_title = f"{model_short} | {device_display[:30]} | {backend_display}"
-    
-    if kv_cache != "auto" and kv_cache != "f16":
-        server_title += f" | {kv_cache}"
-    
-    console.print(Panel(
-        f"[green]Model:[/green] {ollama_model.full_name}\n"
-        f"[blue]Size:[/blue] {ollama_model.size_gb:.1f} GB\n"
-        f"[blue]GGUF:[/blue] {gguf_path.name[:50]}...\n"
-        f"[yellow]Port:[/yellow] {port}\n"
-        f"[magenta]Backend:[/magenta] {device_config.backend.value}\n"
-        f"[cyan]Device:[/cyan] {device_config.device.name}",
-        title=f"Ollama: {model_short}"
-    ))
-    
-    cache_info = f"\n[dim]KV Cache: {kv_cache}" if kv_cache != "auto" else ""
-    if actual_cpu_offload > 0:
-        cache_info += f"\n[dim]CPU Offload: {actual_cpu_offload} layers"
-    
-    console.print(Panel(
-        f"[green]Model:[/green] {ollama_model.full_name}\n"
-        f"[blue]Backend:[/blue] {device_config.backend.value}\n"
-        f"[yellow]Device:[/yellow] {device_config.device.name}\n"
-        f"[magenta]GPU Layers:[/magenta] {gpu_layers_display}\n"
-        f"[cyan]Context:[/cyan] {ctx_size}"
-        f"{cache_info}",
-        title="Configuration"
-    ))
-    
-    server = None
-    try:
-        extra_kwargs = {}
-        if rope_scaling != "none":
-            extra_kwargs['rope_scaling'] = rope_scaling
-        if rope_scale != 1.0:
-            extra_kwargs['rope_scale'] = rope_scale
-        if threads > 0:
-            extra_kwargs['n_threads'] = threads
-        if batch_size > 0:
-            extra_kwargs['batch_size'] = batch_size
-        if ubatch_size > 0:
-            extra_kwargs['ubatch_size'] = ubatch_size
-        if flash_attn:
-            extra_kwargs['flash_attn'] = 'auto'  # Use 'auto', 'on', or 'off'
-        
-        server = LlamaServer(
-            model=str(gguf_path),
-            host=host,
-            port=port,
-            ctx_size=ctx_size,
-            n_gpu_layers=n_gpu_layers,
-            device=device_str,
-            gpu_backend=device_config.backend.value,
-            kv_cache_quant=kv_cache,
-            cpu_offload=actual_cpu_offload > 0,
-            cpu_offload_layers=actual_cpu_offload,
-            **extra_kwargs
-        )
-        
-        console.print(Panel(
-            f"[green]Server:[/green] http://{host}:{port}\n"
-            f"[blue]OpenAI API:[/blue] http://{host}:{port}/v1\n"
-            f"[magenta]Backend:[/magenta] {device_config.backend.value}\n"
-            f"[cyan]Device:[/cyan] {device_config.device.name}\n"
-            f"[yellow]Press Ctrl+C to stop[/yellow]",
-            title=server_title
-        ))
-        
-        server.start(wait=False)
-        
-        import time
-        time.sleep(3)
-        
-        if server._process and server._process.poll() is not None:
-            stdout, stderr = server._process.communicate()
-            console.print(f"\n[red bold]Server failed to start![/red bold]")
-            console.print(f"[dim]Exit code: {server._process.returncode}[/dim]")
-            if stdout:
-                console.print(f"[dim]stdout:[/dim]")
-                for line in stdout.strip().split("\n")[-20:]:
-                    if line.strip():
-                        console.print(f"[dim]  {line}[/dim]")
-            if stderr:
-                console.print(f"[red]stderr:[/red]")
-                for line in stderr.strip().split("\n")[-20:]:
-                    if line.strip():
-                        console.print(f"[red]  {line}[/dim]")
-            
-            console.print(f"\n[yellow]Troubleshooting tips:[/yellow]")
-            
-            error_lower = (stderr or "").lower()
-            
-            if "unknown model architecture" in error_lower:
-                import re
-                arch_match = re.search(r"unknown model architecture: '([^']+)'", error_lower)
-                arch_name = arch_match.group(1) if arch_match else "unknown"
-                console.print(f"  [red]✗ Model architecture '{arch_name}' not supported by llama.cpp[/red]")
-                console.print(f"\n  [yellow]This model requires Ollama's patched llama.cpp with custom patches.[/yellow]")
-                console.print(f"  [green]✓ Options:[/green]")
-                console.print(f"     1. Use Ollama directly:")
-                console.print(f"        [cyan]ollama run {model}[/cyan]")
-                console.print(f"     2. Find a compatible GGUF variant on HuggingFace")
-            elif server._process.returncode == -6:
-                console.print(f"  [red]✗ Server crashed (SIGABRT)[/red]")
-                if ollama_model.size_gb > 10:
-                    console.print(f"  [yellow]Model size ({ollama_model.size_gb:.1f}GB) may be too large for GPU[/yellow]")
-                    console.print(f"  [green]✓ Try CPU offloading:[/green]")
-                    console.print(f"      moxing ollama serve {model} -d gpu1 -b {device_config.backend.value} --cpu-offload 20")
-                else:
-                    console.print(f"  [yellow]This model may require special patches not in standard llama.cpp[/yellow]")
-                    console.print(f"  [green]✓ Use Ollama directly:[/green] ollama run {model}")
-            elif "out of memory" in error_lower or "cuda error" in error_lower or "hip error" in error_lower:
-                console.print(f"  [red]✗ GPU memory insufficient for model ({ollama_model.size_gb:.1f}GB)[/red]")
-                if cpu_offload == 0:
-                    console.print(f"  [green]✓ Try CPU offloading:[/green]")
-                    console.print(f"      moxing ollama serve {model} -d gpu1 -b {device_config.backend.value} --cpu-offload 20")
-                    console.print(f"  [green]✓ Or smaller context:[/green]")
-                    console.print(f"      moxing ollama serve {model} -d gpu1 -b {device_config.backend.value} -c 1024")
-                else:
-                    console.print(f"  [green]✓ Increase CPU offload:[/green]")
-                    console.print(f"      moxing ollama serve {model} -d gpu1 -b {device_config.backend.value} --cpu-offload 30")
-            else:
-                console.print(f"  • The GGUF format may be incompatible with llama.cpp")
-                console.print(f"  • Try: ollama run {model} (use Ollama directly)")
-                console.print(f"  • Or download a compatible GGUF from Hugging Face")
-            raise typer.Exit(1)
-        
-        serve_with_verbose_monitor(server, verbose=verbose, web_monitor=web_monitor)
-            
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Shutting down...[/yellow]")
-        if server:
-            server.stop()
-    except RuntimeError as e:
-        console.print(f"[red]Runtime error: {e}[/red]")
-        import traceback
-        console.print(f"[dim]{traceback.format_exc()}[/dim]")
-        raise typer.Exit(1)
-    except Exception as e:
-        console.print(f"[red]Unexpected error: {e}[/red]")
-        import traceback
-        console.print(f"[dim]{traceback.format_exc()}[/dim]")
-        raise typer.Exit(1)
+    serve_with_ollama_backend(model, port, host, ctx_size, device, backend, verbose)
 
 
 def _fast_check_gguf_compatibility(gguf_path: Path):
@@ -2085,8 +1916,12 @@ def _fast_check_gguf_compatibility(gguf_path: Path):
     
     Returns:
         Tuple of (is_compatible, error_message)
+        
+    Also checks for Ollama-specific architectures that require Ollama backend.
     """
     import struct
+    
+    OLLAMA_ONLY_ARCHITECTURES = ['gemma4', 'gemma4.it']
     
     try:
         with open(gguf_path, 'rb') as f:
@@ -2101,6 +1936,8 @@ def _fast_check_gguf_compatibility(gguf_path: Path):
             tensor_count = struct.unpack('<Q', f.read(8))[0]
             metadata_kv_count = struct.unpack('<Q', f.read(8))[0]
             
+            architecture = None
+            
             for _ in range(min(metadata_kv_count, 100)):
                 try:
                     key_len = struct.unpack('<Q', f.read(8))[0]
@@ -2108,6 +1945,15 @@ def _fast_check_gguf_compatibility(gguf_path: Path):
                         return True, None
                     key = f.read(key_len).decode('utf-8')
                     value_type = struct.unpack('<I', f.read(4))[0]
+                    
+                    if key == 'general.architecture' and value_type == 8:
+                        str_len = struct.unpack('<Q', f.read(8))[0]
+                        architecture = f.read(str_len).decode('utf-8')
+                        continue
+                    
+                    for ollama_arch in OLLAMA_ONLY_ARCHITECTURES:
+                        if key.startswith(f'{ollama_arch}.'):
+                            architecture = ollama_arch
                     
                     if value_type == 0:
                         f.read(1)
@@ -2151,6 +1997,11 @@ def _fast_check_gguf_compatibility(gguf_path: Path):
                                     break
                 except struct.error:
                     return True, None
+            
+            if architecture:
+                for ollama_arch in OLLAMA_ONLY_ARCHITECTURES:
+                    if architecture.startswith(ollama_arch) or architecture == ollama_arch:
+                        return False, f"Architecture '{architecture}' requires Ollama backend (llama.cpp doesn't support it)"
             
             return True, None
             
@@ -3043,6 +2894,62 @@ def monitor_stats(
     
     if not metrics and not slots:
         console.print(f"[red]Failed to connect to server at {host}:{port}[/red]")
+
+
+@app.command("extract-mmproj")
+def extract_mmproj_cmd(
+    model: str = typer.Argument(..., help="Ollama model name or GGUF file path"),
+    output: Optional[str] = typer.Option(None, "-o", "--output", help="Output mmproj file path"),
+    model_type: Optional[str] = typer.Option(None, "-m", "--model-type", help="Model type (auto-detect if not specified)"),
+):
+    """Extract multimodal projector from Ollama model."""
+    from moxing.gguf_tools.extract_mmproj import extract_mmproj
+    import shutil
+    
+    # Determine if it's a model name or file path
+    if Path(model).exists():
+        model_path = model
+    else:
+        console.print(f"[blue]Finding Ollama model {model}...[/blue]")
+        # Try to find in Ollama's blob directory
+        import glob
+        blob_dir = Path.home() / ".ollama" / "models" / "blobs"
+        ollama_models = Path("/usr/share/ollama/.ollama/models/blobs")
+        
+        model_path = None
+        for search_dir in [ollama_models, blob_dir]:
+            matches = list(search_dir.glob(f"sha256-{model}*")) if "-" in model else list(search_dir.glob("*"))
+            if matches:
+                for match in matches:
+                    if match.stat().st_size > 1e9:  # At least 1GB
+                        model_path = str(match)
+                        break
+        
+        if not model_path:
+            console.print(f"[red]Error: Model not found: {model}[/red]")
+            console.print("[yellow]Tip: Use 'ollama list' to see installed models[/yellow]")
+            raise typer.Exit(1)
+    
+    # Default output path
+    if not output:
+        output = f"mmproj-{Path(model).name}.gguf"
+    
+    console.print(f"[blue]Extracting mmproj from: {model_path}[/blue]")
+    console.print(f"[blue]Output: {output}[/blue]\n")
+    
+    try:
+        success = extract_mmproj(str(model_path), output, model_type)
+        
+        if success:
+            console.print(f"\n[green]✓ Successfully extracted mmproj to {output}[/green]")
+            console.print(f"\n[yellow]Usage example:[/yellow]")
+            console.print(f"  llama-server -m {model_path} --mmproj {output} --port 8080")
+        else:
+            console.print(f"\n[yellow]Model may not have multimodal support[/yellow]")
+            raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]✗ Failed to extract mmproj: {e}[/red]")
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
