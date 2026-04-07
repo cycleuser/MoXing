@@ -50,6 +50,10 @@ class RunnerConfig:
     batch_size: int = 2048
     flash_attn: bool = True
     kv_cache: str = "f16"
+    backend_index: int = -1
+    runner_type: str = "ollama"
+    verbose_runner: bool = False
+    fit_mode: str = "auto"
 
 
 class OllamaModelResolver:
@@ -179,11 +183,34 @@ class OllamaModelResolver:
 class OllamaRunnerBinary:
     """管理 Ollama Runner 二进制文件"""
     
-    def __init__(self, backend: str = "auto", device: str = "auto"):
+    def __init__(self, backend: str = "auto", device: str = "auto", runner_type: str = "ollama"):
         self.backend = backend
         self.device = device
+        self.runner_type = runner_type  # "ollama" or "official"
         self.bin_dir = self._get_bin_dir()
-        self.runner_path = self.bin_dir / "llama-server"
+        self.runner_path = self._get_runner_path()
+    
+    def _get_runner_path(self) -> Path:
+        """获取 runner 可执行文件路径"""
+        if self.runner_type == "ollama":
+            candidates = [
+                self.bin_dir / f"ollama-runner-{self.backend}",
+                self.bin_dir / "ollama-runner",
+            ]
+        else:
+            candidates = [
+                self.bin_dir / "llama-server",
+            ]
+        
+        for path in candidates:
+            if path.is_symlink():
+                real_path = path.resolve()
+                if real_path.exists():
+                    return path
+            elif path.exists():
+                return path
+        
+        return candidates[0]
     
     def _get_bin_dir(self) -> Path:
         """获取二进制目录"""
@@ -192,22 +219,16 @@ class OllamaRunnerBinary:
         
         backend = self.backend if self.backend != "auto" else "cpu"
         
-        # 优先使用 Ollama 版本
-        ollama_bin = moxing_dir / "bin" / f"ollama-{platform}-{backend}"
-        if ollama_bin.exists():
-            return ollama_bin
+        if self.runner_type == "ollama":
+            bin_name = f"ollama-{platform}-{backend}"
+        else:
+            bin_name = f"official-{platform}-{backend}"
         
-        # 回退到标准版本
-        standard_bin = moxing_dir / "bin" / f"{platform}-{backend}"
-        if standard_bin.exists():
-            return standard_bin
+        bin_path = moxing_dir / "bin" / bin_name
+        if bin_path.exists():
+            return bin_path
         
-        # 最后尝试从 binaries_ollama_new
-        legacy_bin = Path(moxing_dir.parent) / "binaries_ollama_new" / f"linux-x64-{backend}"
-        if legacy_bin.exists():
-            return legacy_bin
-        
-        raise FileNotFoundError(f"找不到 {backend} 后端的二进制文件")
+        raise FileNotFoundError(f"找不到 {self.runner_type} {backend} 后端的二进制文件: {bin_path}")
     
     def _detect_platform(self) -> str:
         """检测平台"""
@@ -237,6 +258,283 @@ class OllamaRunnerBinary:
             return None
 
 
+class OllamaRunnerDownloader:
+    """从 Ollama 官方下载预编译的 runner"""
+    
+    OLLAMA_REPO = "ollama/ollama"
+    OLLAMA_VERSION = "v0.6.8"
+    CACHE_DIR = Path.home() / ".cache" / "moxing" / "ollama-runners"
+    
+    PLATFORM_PACKAGES = {
+        "linux-x64": {
+            "cuda": "ollama-linux-amd64.tar.zst",
+            "vulkan": "ollama-linux-amd64.tar.zst",
+            "cpu": "ollama-linux-amd64.tar.zst",
+            "rocm": "ollama-linux-amd64-rocm.tar.zst",
+        },
+        "linux-arm64": {
+            "cuda_jetpack5": "ollama-linux-arm64-jetpack5.tar.zst",
+            "cuda_jetpack6": "ollama-linux-arm64-jetpack6.tar.zst",
+            "cpu": "ollama-linux-arm64.tar.zst",
+        },
+        "darwin-arm64": {
+            "metal": "ollama-darwin.tgz",
+        },
+        "windows-x64": {
+            "cuda": "ollama-windows-amd64.zip",
+            "cpu": "ollama-windows-amd64.zip",
+            "rocm": "ollama-windows-amd64-rocm.zip",
+            "mlx": "ollama-windows-amd64-mlx.zip",
+        },
+    }
+    
+    def __init__(self, version: str = None):
+        self.version = version or self.OLLAMA_VERSION
+        self.cache_dir = self.CACHE_DIR
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    def detect_platform(self) -> str:
+        """检测当前平台"""
+        if sys.platform == "darwin":
+            arch = "arm64" if os.uname().machine == "arm64" else "x64"
+            return f"darwin-{arch}"
+        elif sys.platform == "win32":
+            return "windows-x64"
+        else:
+            arch = "arm64" if os.uname().machine in ["arm64", "aarch64"] else "x64"
+            return f"linux-{arch}"
+    
+    def get_bin_dir(self, backend: str) -> Path:
+        """获取 runner 安装目录"""
+        platform = self.detect_platform()
+        moxing_dir = Path(__file__).parent
+        return moxing_dir / "bin" / f"ollama-{platform}-{backend}"
+    
+    def has_runner(self, backend: str) -> bool:
+        """检查 runner 是否已安装"""
+        bin_dir = self.get_bin_dir(backend)
+        if not bin_dir.exists():
+            return False
+        runner = bin_dir / f"ollama-runner-{backend}"
+        return runner.exists()
+    
+    def list_available_backends(self) -> List[str]:
+        """列出当前平台可用的后端"""
+        platform = self.detect_platform()
+        return list(self.PLATFORM_PACKAGES.get(platform, {}).keys())
+    
+    def download_runner(self, backend: str = "cuda", force: bool = False) -> Path:
+        """下载并安装 runner"""
+        platform = self.detect_platform()
+        
+        if platform not in self.PLATFORM_PACKAGES:
+            raise ValueError(f"不支持的平台: {platform}")
+        
+        packages = self.PLATFORM_PACKAGES[platform]
+        if backend not in packages:
+            raise ValueError(f"平台 {platform} 不支持后端 {backend}，可用: {list(packages.keys())}")
+        
+        bin_dir = self.get_bin_dir(backend)
+        
+        if not force and self.has_runner(backend):
+            console.print(f"[green]Runner 已安装: {bin_dir}[/green]")
+            return bin_dir
+        
+        package_name = packages[backend]
+        download_url = f"https://github.com/{self.OLLAMA_REPO}/releases/download/{self.version}/{package_name}"
+        
+        console.print(f"[blue]下载 Ollama runner ({backend})...[/blue]")
+        console.print(f"[dim]版本: {self.version}[/dim]")
+        console.print(f"[dim]包: {package_name}[/dim]")
+        console.print(f"[dim]目标: {bin_dir}[/dim]")
+        
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            archive_path = tmpdir / package_name
+            
+            self._download_file(download_url, archive_path)
+            
+            extract_dir = tmpdir / "extract"
+            self._extract_archive(archive_path, extract_dir)
+            
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            self._copy_files(extract_dir, bin_dir, backend)
+        
+        version_file = bin_dir / "VERSION"
+        version_file.write_text(f"{self.version}\n{backend}\nollama\n")
+        
+        console.print(f"[green]安装完成: {bin_dir}[/green]")
+        return bin_dir
+    
+    def download_all(self, force: bool = False) -> Dict[str, bool]:
+        """下载所有可用的 runner"""
+        results = {}
+        for backend in self.list_available_backends():
+            try:
+                self.download_runner(backend, force=force)
+                results[backend] = True
+            except Exception as e:
+                console.print(f"[red]下载 {backend} 失败: {e}[/red]")
+                results[backend] = False
+        return results
+    
+    def _download_file(self, url: str, dest: Path):
+        """下载文件"""
+        from rich.progress import Progress, BarColumn, DownloadColumn, TransferSpeedColumn, TimeRemainingColumn, TextColumn
+        
+        req = Request(url, headers={"Accept": "application/octet-stream", "User-Agent": "moxing"})
+        
+        with urlopen(req, timeout=600) as response:
+            total = int(response.headers.get("content-length", 0))
+            
+            with Progress(
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                DownloadColumn(),
+                TransferSpeedColumn(),
+                TimeRemainingColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("下载中", total=total)
+                downloaded = 0
+                chunk_size = 8192 * 16
+                
+                with open(dest, "wb") as f:
+                    while True:
+                        chunk = response.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        progress.update(task, completed=downloaded)
+    
+    def _extract_archive(self, archive_path: Path, dest_dir: Path):
+        """解压归档"""
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        
+        if archive_path.suffix == ".zst":
+            try:
+                result = subprocess.run(
+                    ["zstd", "-d", "-c", str(archive_path)],
+                    capture_output=True
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"解压失败: {result.stderr.decode()}")
+                
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
+                    tmp.write(result.stdout)
+                    tmp_path = Path(tmp.name)
+                
+                try:
+                    import tarfile
+                    with tarfile.open(tmp_path, "r") as tar:
+                        tar.extractall(dest_dir)
+                finally:
+                    tmp_path.unlink()
+            except FileNotFoundError:
+                raise RuntimeError("需要安装 zstd: apt install zstd 或 brew install zstd")
+        elif archive_path.suffix == ".tgz" or archive_path.name.endswith(".tar.gz"):
+            import tarfile
+            with tarfile.open(archive_path, "r:gz") as tar:
+                tar.extractall(dest_dir)
+        elif archive_path.suffix == ".zip":
+            import zipfile
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                zf.extractall(dest_dir)
+        else:
+            raise ValueError(f"不支持的归档格式: {archive_path.suffix}")
+    
+    def _copy_files(self, extract_dir: Path, bin_dir: Path, backend: str):
+        """复制 runner 文件"""
+        lib_dir = extract_dir / "lib" / "ollama"
+        
+        if not lib_dir.exists():
+            lib_dir = extract_dir / "lib"
+        
+        backend_subdirs = {
+            "cuda": ["cuda_v13", "cuda_v12"],
+            "rocm": ["rocm"],
+            "vulkan": ["vulkan"],
+            "mlx": ["mlx"],
+            "cpu": [],
+            "cuda_jetpack5": ["cuda_jetpack5"],
+            "cuda_jetpack6": ["cuda_jetpack6"],
+        }
+        
+        copied = []
+        
+        if lib_dir.exists():
+            for item in lib_dir.iterdir():
+                if item.is_file():
+                    if item.suffix in [".so", ".dylib", ".dll"] or ".so." in item.name or ".dylib." in item.name:
+                        shutil.copy2(item, bin_dir / item.name)
+                        copied.append(item.name)
+        
+        subdirs = backend_subdirs.get(backend, [])
+        for subdir in subdirs:
+            backend_dir = lib_dir / subdir if lib_dir.exists() else extract_dir / "lib" / "ollama" / subdir
+            if backend_dir.exists():
+                for item in backend_dir.iterdir():
+                    if item.is_file():
+                        shutil.copy2(item, bin_dir / item.name)
+                        copied.append(item.name)
+        
+        bin_subdir = extract_dir / "bin"
+        if bin_subdir.exists():
+            for item in bin_subdir.iterdir():
+                if item.is_file() and item.name.startswith("ollama"):
+                    target_name = f"ollama-runner-{backend}" if backend not in ["cpu"] else "ollama-runner"
+                    shutil.copy2(item, bin_dir / target_name)
+                    os.chmod(bin_dir / target_name, 0o755)
+                    copied.append(target_name)
+        
+        for name in copied:
+            console.print(f"  [green]{name}[/green]")
+        
+        if not copied:
+            console.print(f"  [yellow]未找到文件[/yellow]")
+    
+    def use_system_ollama(self, backend: str = "cuda") -> Optional[Path]:
+        """使用系统安装的 Ollama 库"""
+        ollama_lib_dirs = [
+            Path("/usr/local/lib/ollama"),
+            Path("/usr/lib/ollama"),
+            Path("/opt/ollama/lib"),
+        ]
+        
+        for lib_dir in ollama_lib_dirs:
+            if not lib_dir.exists():
+                continue
+            
+            backend_map = {
+                "cuda": ["cuda_v13", "cuda_v12"],
+                "rocm": ["rocm"],
+                "vulkan": ["vulkan"],
+            }
+            
+            subdirs = backend_map.get(backend, [])
+            for subdir in subdirs:
+                backend_dir = lib_dir / subdir
+                if backend_dir.exists():
+                    console.print(f"[green]使用系统 Ollama 库: {backend_dir}[/green]")
+                    return backend_dir
+        
+        return None
+
+
+def download_ollama_runner(backend: str = "auto", version: str = None) -> Path:
+    """下载 Ollama runner (便捷函数)"""
+    downloader = OllamaRunnerDownloader(version)
+    
+    if backend == "auto":
+        backends = downloader.list_available_backends()
+        backend = backends[0] if backends else "cuda"
+    
+    return downloader.download_runner(backend)
+
+
 class OllamaRunnerServer:
     """Ollama Runner 服务器"""
     
@@ -253,7 +551,7 @@ class OllamaRunnerServer:
         self._stop_event = threading.Event()
         
         # 初始化 runner
-        self.runner = OllamaRunnerBinary(config.backend, config.device)
+        self.runner = OllamaRunnerBinary(config.backend, config.device, config.runner_type)
     
     def start(self, wait_ready: bool = True) -> bool:
         """启动服务器"""
@@ -267,14 +565,18 @@ class OllamaRunnerServer:
         # 准备环境
         env = self._prepare_env()
         
-        if self.verbose:
-            console.print(f"[dim]命令: {' '.join(cmd)}[/dim]")
+        # 始终显示命令
+        console.print(f"[blue]命令:[/blue]")
+        console.print(f"[dim]{' '.join(cmd)}[/dim]")
+        console.print(f"[blue]Runner:[/blue] {self.runner.runner_path}")
+        console.print(f"[blue]工作目录:[/blue] {self.runner.bin_dir}")
+        console.print("")
         
-        # 启动进程
+        # 启动进程 - 输出直接显示到终端
         self.process = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE if not self.verbose else None,
-            stderr=subprocess.PIPE if not self.verbose else None,
+            stdout=None,  # 直接输出到终端
+            stderr=None,  # 直接输出到终端
             text=True,
             env=env,
             cwd=str(self.runner.bin_dir)
@@ -307,16 +609,24 @@ class OllamaRunnerServer:
         
         # Flash attention
         if self.config.flash_attn:
-            cmd.append("-fa")
+            cmd.extend(["-fa", "on"])
         
         # 批大小
         if self.config.batch_size > 0:
             cmd.extend(["-b", str(self.config.batch_size)])
         
         # KV 缓存类型
-        if self.config.kv_cache and self.config.kv_cache != "f16":
+        if self.config.kv_cache and self.config.kv_cache not in ("f16", "auto"):
             cmd.extend(["-ctk", self.config.kv_cache])
             cmd.extend(["-ctv", self.config.kv_cache])
+        
+        # Fit 模式
+        if self.config.fit_mode and self.config.fit_mode != "auto":
+            cmd.extend(["--fit", self.config.fit_mode])
+        
+        # Runner verbose
+        if self.config.verbose_runner:
+            cmd.append("--verbose")
         
         return cmd
     
@@ -325,51 +635,77 @@ class OllamaRunnerServer:
         env = os.environ.copy()
         
         # 库路径
-        lib_path = str(self.runner.bin_dir)
-        if "LD_LIBRARY_PATH" in env:
-            env["LD_LIBRARY_PATH"] = f"{lib_path}:{env['LD_LIBRARY_PATH']}"
-        else:
-            env["LD_LIBRARY_PATH"] = lib_path
+        lib_paths = [str(self.runner.bin_dir)]
         
-        # 设备选择
-        device = self.config.device
+        # 添加后端特定的库路径
         backend = self.config.backend
-        
-        if device.startswith("gpu"):
-            gpu_id = int(device.replace("gpu", ""))
+        if backend == "rocm":
+            # ROCm 库路径
+            rocm_paths = [
+                "/opt/rocm/lib",
+                "/opt/rocm/core-7.12/lib",
+                "/opt/rocm-7.1.1/lib",
+            ]
+            for path in rocm_paths:
+                if os.path.exists(path):
+                    lib_paths.append(path)
             
-            if backend == "cuda":
-                env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+            # 设置 HIP 设备
+            if self.config.backend_index >= 0:
+                env["HIP_VISIBLE_DEVICES"] = str(self.config.backend_index)
                 if self.verbose:
-                    console.print(f"[blue]使用 CUDA GPU {gpu_id}[/blue]")
-            elif backend == "rocm":
+                    console.print(f"[blue]使用 ROCm GPU index {self.config.backend_index}[/blue]")
+            elif self.config.device.startswith("gpu"):
+                gpu_id = int(self.config.device.replace("gpu", ""))
                 env["HIP_VISIBLE_DEVICES"] = str(gpu_id)
                 if self.verbose:
                     console.print(f"[blue]使用 ROCm GPU {gpu_id}[/blue]")
-            # Vulkan 通过 llama.cpp 参数处理
+        
+        elif backend == "cuda":
+            # CUDA 库路径
+            cuda_paths = [
+                "/usr/local/cuda/lib64",
+                "/usr/local/cuda-13.2/lib64",
+            ]
+            for path in cuda_paths:
+                if os.path.exists(path):
+                    lib_paths.append(path)
+            
+            # 设置 CUDA 设备
+            if self.config.device.startswith("gpu"):
+                gpu_id = int(self.config.device.replace("gpu", ""))
+                env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+                if self.verbose:
+                    console.print(f"[blue]使用 CUDA GPU {gpu_id}[/blue]")
+        
+        # 合并库路径
+        if "LD_LIBRARY_PATH" in env:
+            lib_paths.append(env["LD_LIBRARY_PATH"])
+        env["LD_LIBRARY_PATH"] = ":".join(lib_paths)
         
         return env
     
-    def _wait_for_ready(self, timeout: float = 60.0) -> bool:
+    def _wait_for_ready(self, timeout: float = 120.0) -> bool:
         """等待服务器就绪"""
         start_time = time.time()
         
         while time.time() - start_time < timeout:
             if self.process.poll() is not None:
                 # 进程已退出
-                stdout, stderr = self.process.communicate()
-                console.print(f"[red]服务器启动失败[/red]")
-                if stderr:
-                    console.print(f"[red]{stderr}[/red]")
+                console.print(f"[red]服务器启动失败 (进程退出码: {self.process.returncode})[/red]")
                 return False
             
             # 检查端口
             if self._check_port():
+                console.print("[green]服务已就绪[/green]")
                 return True
             
             time.sleep(0.5)
         
-        console.print(f"[red]等待服务器超时[/red]")
+        console.print(f"[red]等待服务器超时 ({timeout}秒)[/red]")
+        # 显示进程状态
+        if self.process.poll() is None:
+            console.print("[yellow]进程仍在运行，但端口未响应[/yellow]")
         return False
     
     def _check_port(self) -> bool:
@@ -419,6 +755,9 @@ def serve_ollama_model(
     host: str = "127.0.0.1",
     ctx_size: int = 32768,
     verbose: bool = False,
+    runner_type: str = "ollama",
+    verbose_runner: bool = False,
+    fit_mode: str = "auto",
     **kwargs
 ) -> Optional[OllamaRunnerServer]:
     """
@@ -434,6 +773,9 @@ def serve_ollama_model(
         host: 服务主机
         ctx_size: 上下文大小
         verbose: 详细输出
+        runner_type: runner 类型 ("ollama" 或 "official")
+        verbose_runner: runner 详细日志
+        fit_mode: 参数拟合模式 ("auto", "on", "off")
         
     Returns:
         OllamaRunnerServer 实例
@@ -458,6 +800,21 @@ def serve_ollama_model(
         backend = best.backend.value
         console.print(f"[blue]自动选择后端: {backend}[/blue]")
     
+    # 获取设备的 backend_index
+    backend_index = -1
+    if device.startswith("gpu"):
+        from moxing.device import DeviceDetector
+        detector = DeviceDetector()
+        devices = detector.detect()
+        try:
+            gpu_id = int(device.replace("gpu", ""))
+            for dev in devices:
+                if dev.index == gpu_id:
+                    backend_index = dev.backend_index if dev.backend_index >= 0 else dev.index
+                    break
+        except (ValueError, AttributeError):
+            pass
+    
     # 创建配置
     config = RunnerConfig(
         backend=backend,
@@ -465,6 +822,10 @@ def serve_ollama_model(
         port=port,
         host=host,
         ctx_size=ctx_size,
+        backend_index=backend_index,
+        runner_type=runner_type,
+        verbose_runner=verbose_runner or verbose,
+        fit_mode=fit_mode,
         **kwargs
     )
     

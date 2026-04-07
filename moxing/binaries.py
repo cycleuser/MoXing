@@ -317,20 +317,28 @@ def clear_skip_update():
         SKIP_UPDATE_FILE.unlink()
 
 
+RUNNER_TYPES = ["official", "ollama", "patched"]
+
 class BinaryManager:
     """
     Manage llama.cpp binaries with bundled support.
     
     Priority:
-    1. Bundled binaries in moxing/bin/{os}-{arch}-{backend}/
+    1. Bundled binaries in moxing/bin/{runner}-{os}-{arch}-{backend}/
     2. Cached binaries in ~/.cache/moxing/binaries/{os}-{arch}-{backend}/
     3. Download from GitHub releases
+    
+    Runner types:
+    - official: Official llama.cpp binaries (latest models support)
+    - ollama: Ollama patched binaries (extra model support)
+    - patched: MoXing patched binaries
     """
     
-    def __init__(self, backend: str = "auto", cache_dir: Optional[Path] = None):
+    def __init__(self, backend: str = "auto", runner: str = "official", cache_dir: Optional[Path] = None):
         self.cache_dir = cache_dir or CACHE_DIR
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._requested_backend = backend
+        self._runner_type = runner if runner in RUNNER_TYPES else "official"
         self._resolved_backend: Optional[str] = None
     
     @property
@@ -366,11 +374,25 @@ class BinaryManager:
     
     def _has_bundled_backend(self, backend: str) -> bool:
         """Check if a specific backend is bundled."""
-        platform_dir = BIN_DIR / f"{self.platform_name}-{backend}"
-        if platform_dir.exists():
-            server = platform_dir / f"llama-server{self.binary_extension}"
-            return server.exists()
+        dir_names = self._get_possible_dir_names(backend)
+        for dir_name in dir_names:
+            platform_dir = BIN_DIR / dir_name
+            if platform_dir.exists():
+                server = platform_dir / f"llama-server{self.binary_extension}"
+                if server.exists():
+                    return True
         return False
+    
+    def _get_possible_dir_names(self, backend: str) -> List[str]:
+        """Get possible directory names for a backend, ordered by priority."""
+        names = []
+        if self._runner_type:
+            names.append(f"{self._runner_type}-{self.platform_name}-{backend}")
+        names.append(f"{self.platform_name}-{backend}")
+        for rt in RUNNER_TYPES:
+            if rt != self._runner_type:
+                names.append(f"{rt}-{self.platform_name}-{backend}")
+        return names
     
     def list_bundled_backends(self) -> List[str]:
         """List all bundled backends for current platform."""
@@ -378,20 +400,47 @@ class BinaryManager:
         if not BIN_DIR.exists():
             return backends
         
-        prefix = f"{self.platform_name}-"
+        patterns = [
+            f"{self._runner_type}-{self.platform_name}-",
+            f"{self.platform_name}-",
+        ]
+        for rt in RUNNER_TYPES:
+            if rt != self._runner_type:
+                patterns.append(f"{rt}-{self.platform_name}-")
+        
+        seen_backends = set()
         for d in BIN_DIR.iterdir():
-            if d.is_dir() and d.name.startswith(prefix):
-                backend = d.name[len(prefix):]
-                server = d / f"llama-server{self.binary_extension}"
-                if server.exists():
-                    backends.append(backend)
+            if not d.is_dir():
+                continue
+            for pattern in patterns:
+                if d.name.startswith(pattern):
+                    backend = d.name[len(pattern):]
+                    if backend not in seen_backends:
+                        server = d / f"llama-server{self.binary_extension}"
+                        if server.exists():
+                            backends.append(backend)
+                            seen_backends.add(backend)
+                    break
         
         return backends
     
     def get_binary_dir(self, backend: Optional[str] = None) -> Path:
         """Get the directory containing binaries for a backend."""
         b = backend or self.backend
-        return BIN_DIR / f"{self.platform_name}-{b}"
+        dir_names = self._get_possible_dir_names(b)
+        for dir_name in dir_names:
+            path = BIN_DIR / dir_name
+            if path.exists():
+                server_names = [
+                    f"llama-server{self.binary_extension}",
+                    f"ollama-runner-{b}{self.binary_extension}",
+                    f"ollama-runner{self.binary_extension}",
+                ]
+                for server_name in server_names:
+                    server = path / server_name
+                    if server.exists():
+                        return path
+        return BIN_DIR / f"{self._runner_type}-{self.platform_name}-{b}"
     
     def get_cache_dir(self, backend: Optional[str] = None) -> Path:
         """Get the cache directory for a backend."""
@@ -410,14 +459,24 @@ class BinaryManager:
         binary_name = name if name.endswith(self.binary_extension) else name + self.binary_extension
         
         bundled_dir = self.get_binary_dir(b)
-        bundled_path = bundled_dir / binary_name
-        if bundled_path.exists():
-            return bundled_path
+        
+        candidate_names = [binary_name]
+        if name == "llama-server":
+            candidate_names.extend([
+                f"ollama-runner-{b}{self.binary_extension}",
+                f"ollama-runner{self.binary_extension}",
+            ])
+        
+        for candidate in candidate_names:
+            bundled_path = bundled_dir / candidate
+            if bundled_path.exists():
+                return bundled_path
         
         cache_dir = self.get_cache_dir(b)
-        cache_path = cache_dir / binary_name
-        if cache_path.exists():
-            return cache_path
+        for candidate in candidate_names:
+            cache_path = cache_dir / candidate
+            if cache_path.exists():
+                return cache_path
         
         if backend:
             return self._download_and_get_path(name, backend)
@@ -1067,25 +1126,25 @@ class BinaryManager:
 _binary_manager: Optional[BinaryManager] = None
 
 
-def get_binary_manager(backend: str = "auto") -> BinaryManager:
+def get_binary_manager(backend: str = "auto", runner: str = "official") -> BinaryManager:
     """Get the global binary manager instance."""
     global _binary_manager
-    if _binary_manager is None or backend != "auto":
-        _binary_manager = BinaryManager(backend=backend)
+    if _binary_manager is None or backend != "auto" or runner != "official":
+        _binary_manager = BinaryManager(backend=backend, runner=runner)
     return _binary_manager
 
 
-def ensure_binaries(backend: str = "auto") -> Path:
+def ensure_binaries(backend: str = "auto", runner: str = "official") -> Path:
     """Ensure binaries are available, return path to binary directory."""
-    manager = get_binary_manager(backend)
+    manager = get_binary_manager(backend, runner)
     if not manager.has_binaries():
         manager.download_binaries(quiet=False)
     return manager.get_cache_dir()
 
 
-def get_server_binary(backend: str = "auto") -> Path:
+def get_server_binary(backend: str = "auto", runner: str = "official") -> Path:
     """Get path to llama-server binary."""
-    manager = get_binary_manager(backend)
+    manager = get_binary_manager(backend, runner)
     return manager.get_binary_path("llama-server")
 
 

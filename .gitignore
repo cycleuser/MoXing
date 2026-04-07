@@ -277,3 +277,6 @@ QUICK_*.md
 /llama.cpp
 /ollama
 /TheRock
+data.tar.xz
+control.tar.gz
+hipblaslt.deb
