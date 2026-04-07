@@ -274,3 +274,6 @@ UPDATE_*.md
 QUICK_*.md
 /benchmark_results
 /test_results
+/llama.cpp
+/ollama
+/TheRock
