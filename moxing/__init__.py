@@ -29,7 +29,7 @@ Quick start:
     tq = TurboQuant(TurboQuantConfig(bits_per_channel=3.5))
 """
 
-__version__ = '0.1.26'
+__version__ = '0.1.27'
 
 from moxing.client import Client, ChatCompletion, Message
 from moxing.server import LlamaServer, ServerConfig, GPUInfo
