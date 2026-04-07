@@ -1,44 +1,24 @@
 #!/bin/bash
-#
-# MoXing 开发助手脚本
-#
 
-echo "=============================================="
-echo "  MoXing 开发进度"
-echo "=============================================="
+echo "========================================"
+echo "  MoXing ROCm 测试"
+echo "========================================"
 echo ""
 
-# 显示 git status
-echo "Git Status:"
-git status --short
-echo ""
+export LD_LIBRARY_PATH=/opt/rocm/core-7.12/lib
 
-# 检查未推送的 commits
-UNPUSHED=$(git log origin/main..HEAD --oneline 2>/dev/null | wc -l)
-if [ "$UNPUSHED" -gt 0 ]; then
-    echo "⚠️  未推送的 commits: $UNPUSHED"
-    git log origin/main..HEAD --oneline
-    echo ""
-fi
+echo "测试 moxing devices:"
+moxing devices
 
-# 显示最新的 CI 运行
-echo "最新 CI 运行:"
-gh run list --limit 3
 echo ""
+echo "========================================"
+echo "  ROCm 7.12 库已安装完成"
+echo "========================================"
+echo ""
+echo "已安装的库:"
+ls -la /opt/rocm/core-7.12/lib/lib{hipblas,rocblas,hipblaslt,rocroller}* 2>/dev/null
 
-# 如果有 tag，显示最新版本
-LATEST_TAG=$(git tag -l 'v0.1.*' | sort -V | tail -1)
-if [ -n "$LATEST_TAG" ]; then
-    echo "最新版本: $LATEST_TAG"
-    echo ""
-fi
-
-echo "=============================================="
-echo "  快捷命令"
-echo "=============================================="
 echo ""
-echo "推送代码:      git push"
-echo "创建版本:      git tag v0.1.XX && git push origin v0.1.XX"
-echo "查看 CI:       gh run watch"
-echo "清理临时文件:  rm scripts/test_*.sh scripts/comprehensive_*"
-echo ""
+echo "测试命令:"
+echo "  moxing ollama serve gemma4:31b -b rocm -d gpu1"
+echo "  moxing ollama serve llama3.3:70b -b rocm -d gpu0"

@@ -5,6 +5,7 @@ CLI interface for moxing
 import os
 import sys
 import json
+import time
 import platform
 import subprocess
 from pathlib import Path
@@ -105,6 +106,7 @@ def serve(
     source: str = typer.Option("auto", "-s", "--source", help="Model source (huggingface/modelscope/auto)"),
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, vulkan, cuda, rocm, metal, cpu"),
     device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu (use 'moxing devices' to list)"),
+    runner: str = typer.Option("official", "-r", "--runner", help="Runner: official, ollama (binaries type)"),
     auto: bool = typer.Option(True, "--auto/--no-auto", help="Auto-detect best device"),
     auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed monitoring in terminal"),
@@ -115,6 +117,10 @@ def serve(
     analyze_cache: bool = typer.Option(False, "--analyze-cache", help="Show KV cache analysis and exit"),
 ):
     """Start the LLM server with automatic configuration.
+    
+    Runner Types:
+    - official: Official llama.cpp binaries (latest Qwen3.5, Gemma4 support)
+    - ollama: Ollama patched binaries (extra model support like GLM-4.7)
     
     Host Binding:
     - 127.0.0.1 (default): Local access only
@@ -352,6 +358,7 @@ def serve(
                 n_gpu_layers=device_config.n_gpu_layers,
                 device=device_str,
                 gpu_backend=device_config.backend.value,
+                runner=runner,
                 kv_cache_quant=kv_cache,
                 cpu_offload=cpu_offload > 0,
                 cpu_offload_layers=cpu_offload,
@@ -1602,6 +1609,59 @@ def ollama_list(
         print_ollama_models(models, show_embeddings, show_context)
 
 
+@ollama_app.command("download-runner")
+def ollama_download_runner(
+    backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, cuda, rocm, vulkan, cpu, all"),
+    version: str = typer.Option(None, "-v", "--version", help="Ollama version (default: latest)"),
+    force: bool = typer.Option(False, "-f", "--force", help="Force re-download"),
+    list_available: bool = typer.Option(False, "-l", "--list", help="List available backends"),
+):
+    """Download Ollama runners for different backends.
+    
+    Ollama provides pre-built runners that support all Ollama models.
+    MoXing can use these runners without needing Ollama installed.
+    
+    Examples:
+        moxing ollama download-runner --list
+        moxing ollama download-runner -b cuda
+        moxing ollama download-runner -b rocm
+        moxing ollama download-runner -b all
+    """
+    from moxing.ollama_runner import OllamaRunnerDownloader
+    
+    downloader = OllamaRunnerDownloader(version)
+    
+    if list_available:
+        console.print(f"\n[bold]Platform: {downloader.detect_platform()}[/bold]")
+        console.print("[bold]Available backends:[/bold]")
+        for b in downloader.list_available_backends():
+            status = "[green]✓ installed[/green]" if downloader.has_runner(b) else "[dim]not installed[/dim]"
+            console.print(f"  {b}: {status}")
+        console.print("\n[dim]Use --backend <name> to download[/dim]")
+        console.print("[dim]Use --backend all to download all[/dim]")
+        return
+    
+    if backend == "auto":
+        backends = downloader.list_available_backends()
+        backend = backends[0] if backends else "cuda"
+        console.print(f"[blue]Auto-selecting backend: {backend}[/blue]")
+    
+    if backend == "all":
+        results = downloader.download_all(force=force)
+        console.print("\n[bold]Download Results:[/bold]")
+        for b, success in results.items():
+            status = "[green]✓[/green]" if success else "[red]✗[/red]"
+            console.print(f"  {status} {b}")
+        return
+    
+    try:
+        bin_dir = downloader.download_runner(backend, force=force)
+        console.print(f"\n[green]Runner installed: {bin_dir}[/green]")
+    except Exception as e:
+        console.print(f"[red]Download failed: {e}[/red]")
+        raise typer.Exit(1)
+
+
 @ollama_app.command("serve")
 def ollama_serve(
     model: str = typer.Argument(..., help="Ollama model name (e.g., gemma3:4b)"),
@@ -1610,6 +1670,9 @@ def ollama_serve(
     ctx_size: int = typer.Option(32768, "-c", "--ctx-size", help="Context size (0=auto)"),
     device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu"),
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, cuda, rocm, vulkan, metal, mlx, mps, cpu"),
+    runner_type: str = typer.Option("ollama", "--runner", help="Runner type: ollama (Ollama patched) or official (llama.cpp)"),
+    runner_verbose: bool = typer.Option(False, "--runner-verbose", help="Enable verbose output from llama.cpp runner"),
+    fit_mode: str = typer.Option("auto", "--fit", help="Parameter fitting mode: auto, on, off (use 'off' to disable auto-tuning)"),
     auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port if default is in use"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed monitoring in terminal"),
     web_monitor: bool = typer.Option(False, "-w", "--web", help="Enable web monitoring page"),
@@ -1640,6 +1703,14 @@ def ollama_serve(
     - mps: Apple Metal Performance Shaders (macOS)
     - cpu: CPU only
     
+    Runner Types:
+    - ollama: Ollama patched llama.cpp (supports gemma4 etc.)
+    - official: Official llama.cpp (may have better compatibility)
+    
+    Debug Options:
+    - --runner-verbose: Enable detailed llama.cpp logs
+    - --fit off: Disable parameter auto-tuning (useful for debugging)
+    
     KV Cache Quantization:
     - auto: Automatically choose based on available memory
     - q8_0: 8-bit (high quality)
@@ -1661,6 +1732,8 @@ def ollama_serve(
     Examples:
         moxing ollama serve gemma3:4b
         moxing ollama serve gemma3:4b -b cuda
+        moxing ollama serve gemma4:31b --runner official
+        moxing ollama serve gemma4:31b --runner-verbose --fit off  # Debug mode
         moxing ollama serve omnicoder-9b --kv-cache q4_0
         moxing ollama serve omnicoder-9b --cpu-offload 10
         moxing ollama serve model --prompt-offload
@@ -1669,7 +1742,7 @@ def ollama_serve(
         moxing ollama serve omnicoder-9b -w    # Web monitoring
         moxing ollama serve omnicoder-9b --host 0.0.0.0  # LAN access
     """
-    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor, skip_check, kv_cache, cpu_offload, prompt_offload, rope_scaling, rope_scale, threads, batch_size, ubatch_size, flash_attn)
+    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor, skip_check, kv_cache, cpu_offload, prompt_offload, rope_scaling, rope_scale, threads, batch_size, ubatch_size, flash_attn, runner_type, runner_verbose, fit_mode)
 
 
 def serve_with_ollama_backend(
@@ -1891,6 +1964,9 @@ def ollama_serve_impl(
     batch_size: int = 2048,
     ubatch_size: int = 512,
     flash_attn: bool = True,
+    runner_type: str = "ollama",
+    runner_verbose: bool = False,
+    fit_mode: str = "auto",
 ):
     """Serve an Ollama model using moxing's Ollama runner.
     
@@ -1898,6 +1974,8 @@ def ollama_serve_impl(
     - Direct device selection (-d gpu0, gpu1, etc.)
     - All backends (CUDA, ROCm, Vulkan, CPU)
     - Ollama-specific models (gemma4, etc.)
+    - Runner type selection (--runner ollama or official)
+    - Debug options (--runner-verbose, --fit off)
     
     For direct GGUF files, use 'moxing serve <gguf_file>' instead.
     """
@@ -1943,6 +2021,9 @@ def ollama_serve_impl(
         host=host,
         ctx_size=ctx_size,
         verbose=verbose,
+        runner_type=runner_type,
+        verbose_runner=runner_verbose,
+        fit_mode=fit_mode,
         n_gpu_layers=-1 if cpu_offload == 0 else 999 - cpu_offload,
         threads=threads,
         batch_size=batch_size,
@@ -1958,8 +2039,13 @@ def ollama_serve_impl(
     try:
         if verbose:
             console.print("\n[blue]Server running. Press Ctrl+C to stop.[/blue]")
+        
         while server.is_running():
             time.sleep(1)
+        
+        # 如果进程退出了，显示错误
+        console.print("[red]服务进程已退出[/red]")
+        
     except KeyboardInterrupt:
         console.print("\n[yellow]Stopping server...[/yellow]")
     finally:
@@ -2399,6 +2485,7 @@ def ollama_run(
             n_gpu_layers=device_config.n_gpu_layers,
             device=device_str,
             gpu_backend=device_config.backend.value,
+            runner="ollama",
             kv_cache_quant=kv_cache,
             quiet=False
         )
