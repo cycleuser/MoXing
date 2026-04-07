@@ -134,7 +134,7 @@ PLATFORM_CONFIGS = [
     PlatformConfig(
         name="linux-x64-rocm",
         os="linux", arch="x64", backend="rocm",
-        asset_pattern="bin-ubuntu-rocm-7.2-x64.tar.gz",
+        asset_pattern="bin-ubuntu-rocm-7.12-x64.tar.gz",
         wheel_tag="manylinux_2_17_x86_64",
         binary_ext="", lib_ext=".so",
         description="Linux x64 (ROCm/AMD)",

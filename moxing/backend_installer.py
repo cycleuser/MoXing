@@ -61,7 +61,7 @@ BACKEND_CONFIGS = {
     "rocm": BackendConfig(
         name="rocm",
         backend="rocm",
-        asset_patterns=["bin-ubuntu-rocm-7.2-x64.tar.gz"],
+        asset_patterns=["bin-ubuntu-rocm-7.12-x64.tar.gz"],
         description="AMD ROCm",
         platforms=["linux"]
     ),

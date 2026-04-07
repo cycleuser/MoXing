@@ -1892,40 +1892,78 @@ def ollama_serve_impl(
     ubatch_size: int = 512,
     flash_attn: bool = True,
 ):
-    """Serve an Ollama model using Ollama backend.
+    """Serve an Ollama model using moxing's Ollama runner.
     
-    For Ollama models (e.g., gemma4, llama3.3), use Ollama's patched backend.
+    Uses moxing's compiled Ollama runner binaries which support:
+    - Direct device selection (-d gpu0, gpu1, etc.)
+    - All backends (CUDA, ROCm, Vulkan, CPU)
+    - Ollama-specific models (gemma4, etc.)
+    
     For direct GGUF files, use 'moxing serve <gguf_file>' instead.
     """
-    from moxing.ollama import OllamaClient, get_ollama_model
-    from moxing.device import DeviceDetector
+    from moxing.ollama_runner import serve_ollama_model, OllamaModelResolver
     
     console.print(f"[blue]Looking up model: {model}[/blue]")
     
-    client = OllamaClient()
-    ollama_model = get_ollama_model(model)
+    # 检查模型是否存在
+    resolver = OllamaModelResolver()
+    model_path = resolver.resolve(model)
     
-    if not ollama_model:
+    if not model_path:
         console.print(f"[red]Model not found: {model}[/red]")
-        console.print("[yellow]Available Ollama models:[/yellow]")
-        models = client.list_models()
+        console.print("\n[yellow]Available Ollama models:[/yellow]")
+        models = resolver.list_models()
         for m in models[:10]:
-            console.print(f"  • {m.full_name} ({m.size_gb:.1f}GB)")
+            console.print(f"  • {m['full_name']} ({m['size_gb']:.1f}GB)")
         if len(models) > 10:
             console.print(f"  ... and {len(models) - 10} more")
         console.print("\n[dim]Run 'moxing ollama list' to see all models[/dim]")
-        console.print(f"[dim]For GGUF files, use: moxing serve <gguf_file>[/dim]")
+        console.print("[dim]To download: ollama pull {model}[/dim]")
         raise typer.Exit(1)
     
-    console.print(f"[green]Found model: {ollama_model.full_name} ({ollama_model.size_gb:.1f} GB)[/green]")
+    file_size_gb = model_path.stat().st_size / (1024**3)
+    console.print(f"[green]Found model: {model} ({file_size_gb:.1f} GB)[/green]")
+    console.print(f"[dim]Path: {model_path}[/dim]")
     
-    detector = DeviceDetector()
-    detector.detect()
+    # 自动检测后端
+    if backend == "auto":
+        from moxing.device import DeviceDetector
+        detector = DeviceDetector()
+        detector.detect()
+        best = detector.get_best_device(file_size_gb)
+        backend = best.backend.value
+        console.print(f"[blue]Auto-selected backend: {backend}[/blue]")
     
-    if ctx_size != 4096:
-        console.print(f"[dim]Note: Ollama manages context size automatically. Use -c for llama.cpp backend.[/dim]")
+    # 使用新的 Ollama Runner
+    server = serve_ollama_model(
+        model_name=model,
+        backend=backend,
+        device=device,
+        port=port,
+        host=host,
+        ctx_size=ctx_size,
+        verbose=verbose,
+        n_gpu_layers=-1 if cpu_offload == 0 else 999 - cpu_offload,
+        threads=threads,
+        batch_size=batch_size,
+        flash_attn=flash_attn,
+        kv_cache=kv_cache,
+    )
     
-    serve_with_ollama_backend(model, port, host, ctx_size, device, backend, verbose)
+    if not server:
+        console.print("[red]Failed to start server[/red]")
+        raise typer.Exit(1)
+    
+    # 保持运行
+    try:
+        if verbose:
+            console.print("\n[blue]Server running. Press Ctrl+C to stop.[/blue]")
+        while server.is_running():
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Stopping server...[/yellow]")
+    finally:
+        server.stop()
 
 
 def _fast_check_gguf_compatibility(gguf_path: Path):

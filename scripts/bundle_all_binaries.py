@@ -58,7 +58,7 @@ ALL_PLATFORMS = [
     PlatformConfig(
         name="linux-x64-rocm",
         os="linux", arch="x64", backend="rocm",
-        asset_name="bin-ubuntu-rocm-7.2-x64.tar.gz",
+        asset_name="bin-ubuntu-rocm-7.12-x64.tar.gz",
         description="Linux x64 ROCm (AMD GPU)"
     ),
     PlatformConfig(
