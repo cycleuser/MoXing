@@ -1,0 +1,486 @@
+========================================
+Ollama llama.cpp Multi-Platform Build
+Full Build + Package + Release Upload
+========================================
+Checking dependencies...
+MinGW not found - Installing...
+sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper
+sudo: a password is required
+Could not install MinGW - Windows builds disabled
+CUDA found - CUDA backend enabled
+CUDA Version: 13.2,
+ROCm found - HIP backend enabled
+Vulkan found - Vulkan backend enabled
+
+Available backends:
+  CPU:    Always enabled
+  CUDA:   Enabled
+  ROCm:   Enabled
+  Vulkan: Enabled
+  MinGW:  Disabled
+
+========================================
+[1] Preparing Source Code
+========================================
+Cloning latest Ollama repository...
+Cloning into '/tmp/ollama_build_1775387166'...
+Cloning llama.cpp vendor...
+Cloning into 'llama/vendor'...
+Checking out FETCH_HEAD: ec98e2002
+	sed-e's|@FETCH_HEAD@|$(FETCH_HEAD)|'<$<>$@
+	git-C$(WORKDIR)checkout-f$(FETCH_HEAD)
+		$(FETCH_HEAD)
+	@echo$(FETCH_HEAD)
+Using latest commit
+Applying Ollama patches...
+Applying: ggml-backend: malloc and free using the same compiler
+Using index info to reconstruct a base tree...
+M	ggml/src/ggml-backend.cpp
+M	ggml/src/ggml-cann/ggml-cann.cpp
+M	ggml/src/ggml-cuda/ggml-cuda.cu
+M	ggml/src/ggml-metal/ggml-metal.cpp
+M	ggml/src/ggml-opencl/ggml-opencl.cpp
+M	ggml/src/ggml-rpc/ggml-rpc.cpp
+M	ggml/src/ggml-sycl/ggml-sycl.cpp
+M	ggml/src/ggml-vulkan/ggml-vulkan.cpp
+Falling back to patching base and 3-way merge...
+Auto-merging ggml/src/ggml-vulkan/ggml-vulkan.cpp
+Auto-merging ggml/src/ggml-sycl/ggml-sycl.cpp
+CONFLICT (content): Merge conflict in ggml/src/ggml-sycl/ggml-sycl.cpp
+Auto-merging ggml/src/ggml-rpc/ggml-rpc.cpp
+Auto-merging ggml/src/ggml-opencl/ggml-opencl.cpp
+Auto-merging ggml/src/ggml-metal/ggml-metal.cpp
+Auto-merging ggml/src/ggml-cuda/ggml-cuda.cu
+Auto-merging ggml/src/ggml-cann/ggml-cann.cpp
+Auto-merging ggml/src/ggml-backend.cpp
+Patch failed at 0001 ggml-backend: malloc and free using the same compiler
+When you have resolved this problem, run "git am --continue".
+If you prefer to skip this patch, run "git am --skip" instead.
+To restore the original branch and stop patching, run "git am --abort".
+Patch failed. Resolve any conflicts then continue.
+1. Run 'git -C llama/vendor am --continue'
+2. Run 'make -f Makefile.sync format-patches'
+3. Run 'make -f Makefile.sync clean apply-patches'
+Some patches may have conflicts, resolving...
+Syncing llama.cpp...
+rsync -arvzc --delete -f "include LICENSE" -f "merge llama/llama.cpp/.rsync-filter" llama/vendor/LICENSE llama/vendor/ llama/llama.cpp
+sending incremental file list
+./
+LICENSE
+deleting src/llama-sampling.h
+deleting src/llama-sampling.cpp
+deleting src/models/solar.cpp
+deleting src/models/graph-context-mamba.cpp
+common/
+common/common.cpp
+common/common.h
+common/json-schema-to-grammar.cpp
+common/sampling.cpp
+common/sampling.h
+include/
+include/llama.h
+src/
+src/llama-adapter.cpp
+src/llama-adapter.h
+src/llama-arch.cpp
+src/llama-arch.h
+src/llama-batch.cpp
+src/llama-batch.h
+src/llama-chat.cpp
+src/llama-chat.h
+src/llama-context.cpp
+src/llama-context.h
+src/llama-cparams.h
+src/llama-ext.h
+src/llama-grammar.cpp
+src/llama-grammar.h
+src/llama-graph.cpp
+src/llama-graph.h
+src/llama-hparams.cpp
+src/llama-hparams.h
+src/llama-impl.cpp
+src/llama-impl.h
+src/llama-kv-cache-iswa.cpp
+src/llama-kv-cache.cpp
+src/llama-kv-cache.h
+src/llama-memory-hybrid-iswa.cpp
+src/llama-memory-hybrid-iswa.h
+src/llama-memory-hybrid.cpp
+src/llama-memory-recurrent.cpp
+src/llama-mmap.cpp
+src/llama-mmap.h
+src/llama-model-loader.cpp
+src/llama-model-loader.h
+src/llama-model-saver.cpp
+src/llama-model-saver.h
+src/llama-model.cpp
+src/llama-model.h
+src/llama-quant.cpp
+src/llama-sampler.cpp
+src/llama-sampler.h
+src/llama-vocab.cpp
+src/llama-vocab.h
+src/llama.cpp
+src/unicode.cpp
+src/unicode.h
+src/models/
+src/models/afmoe.cpp
+src/models/apertus.cpp
+src/models/arcee.cpp
+src/models/arctic.cpp
+src/models/baichuan.cpp
+src/models/bailingmoe.cpp
+src/models/bailingmoe2.cpp
+src/models/bert.cpp
+src/models/bitnet.cpp
+src/models/bloom.cpp
+src/models/chameleon.cpp
+src/models/chatglm.cpp
+src/models/codeshell.cpp
+src/models/cogvlm.cpp
+src/models/cohere2-iswa.cpp
+src/models/command-r.cpp
+src/models/dbrx.cpp
+src/models/deci.cpp
+src/models/deepseek.cpp
+src/models/deepseek2.cpp
+src/models/delta-net-base.cpp
+src/models/dots1.cpp
+src/models/dream.cpp
+src/models/ernie4-5-moe.cpp
+src/models/ernie4-5.cpp
+src/models/eurobert.cpp
+src/models/exaone-moe.cpp
+src/models/exaone.cpp
+src/models/exaone4.cpp
+src/models/falcon-h1.cpp
+src/models/falcon.cpp
+src/models/gemma-embedding.cpp
+src/models/gemma.cpp
+src/models/gemma2-iswa.cpp
+src/models/gemma3.cpp
+src/models/gemma3n-iswa.cpp
+src/models/gemma4-iswa.cpp
+src/models/glm4-moe.cpp
+src/models/glm4.cpp
+src/models/gpt2.cpp
+src/models/gptneox.cpp
+src/models/granite-hybrid.cpp
+src/models/granite.cpp
+src/models/grok.cpp
+src/models/grovemoe.cpp
+src/models/hunyuan-dense.cpp
+src/models/hunyuan-moe.cpp
+src/models/internlm2.cpp
+src/models/jais.cpp
+src/models/jais2.cpp
+src/models/jamba.cpp
+src/models/kimi-linear.cpp
+src/models/lfm2.cpp
+src/models/llada-moe.cpp
+src/models/llada.cpp
+src/models/llama-iswa.cpp
+src/models/llama.cpp
+src/models/maincoder.cpp
+src/models/mamba-base.cpp
+src/models/mamba.cpp
+src/models/mimo2-iswa.cpp
+src/models/minicpm3.cpp
+src/models/minimax-m2.cpp
+src/models/mistral3.cpp
+src/models/models.h
+src/models/modern-bert.cpp
+src/models/mpt.cpp
+src/models/nemotron-h.cpp
+src/models/nemotron.cpp
+src/models/neo-bert.cpp
+src/models/olmo.cpp
+src/models/olmo2.cpp
+src/models/olmoe.cpp
+src/models/openai-moe-iswa.cpp
+src/models/openelm.cpp
+src/models/orion.cpp
+src/models/paddleocr.cpp
+src/models/pangu-embedded.cpp
+src/models/phi2.cpp
+src/models/phi3.cpp
+src/models/plamo.cpp
+src/models/plamo2.cpp
+src/models/plamo3.cpp
+src/models/plm.cpp
+src/models/qwen.cpp
+src/models/qwen2.cpp
+src/models/qwen2moe.cpp
+src/models/qwen2vl.cpp
+src/models/qwen3.cpp
+src/models/qwen35.cpp
+src/models/qwen35moe.cpp
+src/models/qwen3moe.cpp
+src/models/qwen3next.cpp
+src/models/qwen3vl-moe.cpp
+src/models/qwen3vl.cpp
+src/models/refact.cpp
+src/models/rnd1.cpp
+src/models/rwkv6-base.cpp
+src/models/rwkv6.cpp
+src/models/rwkv7-base.cpp
+src/models/rwkv7.cpp
+src/models/seed-oss.cpp
+src/models/smallthinker.cpp
+src/models/smollm3.cpp
+src/models/stablelm.cpp
+src/models/starcoder.cpp
+src/models/starcoder2.cpp
+src/models/step35-iswa.cpp
+src/models/t5-dec.cpp
+src/models/t5-enc.cpp
+src/models/wavtokenizer-dec.cpp
+src/models/xverse.cpp
+tools/
+tools/mtmd/
+tools/mtmd/clip-graph.h
+tools/mtmd/clip-impl.h
+tools/mtmd/clip-model.h
+tools/mtmd/clip.cpp
+tools/mtmd/clip.h
+tools/mtmd/mtmd-audio.cpp
+tools/mtmd/mtmd-audio.h
+tools/mtmd/mtmd-helper.cpp
+tools/mtmd/mtmd-image.h
+tools/mtmd/mtmd.cpp
+tools/mtmd/mtmd.h
+tools/mtmd/models/
+tools/mtmd/models/cogvlm.cpp
+tools/mtmd/models/conformer.cpp
+tools/mtmd/models/deepseekocr.cpp
+tools/mtmd/models/gemma4v.cpp
+tools/mtmd/models/glm4v.cpp
+tools/mtmd/models/kimik25.cpp
+tools/mtmd/models/llama4.cpp
+tools/mtmd/models/llava.cpp
+tools/mtmd/models/minicpmv.cpp
+tools/mtmd/models/mobilenetv5.cpp
+tools/mtmd/models/models.h
+tools/mtmd/models/nemotron-v2-vl.cpp
+tools/mtmd/models/paddleocr.cpp
+tools/mtmd/models/pixtral.cpp
+tools/mtmd/models/qwen2vl.cpp
+tools/mtmd/models/qwen3vl.cpp
+tools/mtmd/models/siglip.cpp
+tools/mtmd/models/whisper-enc.cpp
+tools/mtmd/models/youtuvl.cpp
+vendor/
+vendor/miniaudio/
+vendor/miniaudio/miniaudio.h
+vendor/nlohmann/
+vendor/stb/
+
+sent 1,239,440 bytes  received 3,945 bytes  2,486,770.00 bytes/sec
+total size is 8,952,161  speedup is 7.20
+Setting up ollama-debug.h...
+Source prepared successfully (llama.cpp commit: c08d28d08)
+========================================
+[2] Building All Platforms
+========================================
+Building Linux CPU...
+========================================
+Building: linux-x64-cpu
+========================================
+-- Warning: ccache not found - consider installing it for faster compilation or disable this warning with GGML_CCACHE=OFF
+-- CMAKE_SYSTEM_PROCESSOR: x86_64
+-- GGML_SYSTEM_ARCH: x86
+-- Including CPU backend
+-- Found OpenMP_C: -fopenmp (found version "4.5") 
+-- Found OpenMP_CXX: -fopenmp (found version "4.5") 
+-- Found OpenMP: TRUE (found version "4.5")  
+-- x86 detected
+-- Adding CPU backend variant ggml-cpu: -march=native 
+-- ggml version: 0.9.11
+-- ggml commit:  c08d28d08
+-- Could NOT find OpenSSL, try to set the path to OpenSSL root folder in the system variable OPENSSL_ROOT_DIR (missing: OPENSSL_CRYPTO_LIBRARY OPENSSL_INCLUDE_DIR) 
+CMake Warning at vendor/cpp-httplib/CMakeLists.txt:150 (message):
+  OpenSSL not found, HTTPS support disabled
+
+
+-- Generating embedded license file for target: common
+-- Configuring done (0.7s)
+-- Generating done (0.1s)
+-- Build files have been written to: /home/fred/Documents/GitHub/cycleuser/MoXing/build_linux_cpu
+Compiling...
+[ 98%] Built target common
+[100%] Building CXX object tools/llama-bench/CMakeFiles/llama-bench.dir/llama-bench.cpp.o
+[100%] Linking CXX executable ../../bin/llama-bench
+[100%] Built target llama-bench
+[  0%] Built target build_info
+[  1%] Built target cpp-httplib
+[  5%] Built target ggml-base
+[ 13%] Built target ggml-cpu
+[ 15%] Built target ggml
+[ 83%] Built target llama
+[ 98%] Built target common
+[100%] Building CXX object tools/quantize/CMakeFiles/llama-quantize.dir/quantize.cpp.o
+[100%] Linking CXX executable ../../bin/llama-quantize
+[100%] Built target llama-quantize
+[ 22%] Built target ggml-base
+[ 77%] Built target ggml-cpu
+[ 88%] Built target ggml
+[ 88%] Building CXX object examples/gguf/CMakeFiles/llama-gguf.dir/gguf.cpp.o
+[100%] Linking CXX executable ../../bin/llama-gguf
+[100%] Built target llama-gguf
+[  0%] Built target build_info
+[  1%] Built target cpp-httplib
+[  5%] Built target ggml-base
+[ 13%] Built target ggml-cpu
+[ 15%] Built target ggml
+[ 83%] Built target llama
+[ 98%] Built target common
+[ 98%] Building CXX object tools/gguf-split/CMakeFiles/llama-gguf-split.dir/gguf-split.cpp.o
+[100%] Linking CXX executable ../../bin/llama-gguf-split
+[100%] Built target llama-gguf-split
+total 8
+drwxrwxr-x 2 fred fred 4096  4月  5 19:10 .
+drwxrwxr-x 3 fred fred 4096  4月  5 19:10 ..
+linux-x64-cpu build complete
+Building Linux CUDA...
+========================================
+Building: linux-x64-cuda
+========================================
+-- The CUDA compiler identification is NVIDIA 13.2.51
+-- Detecting CUDA compiler ABI info
+-- Detecting CUDA compiler ABI info - done
+-- Check for working CUDA compiler: /usr/local/cuda/bin/nvcc - skipped
+-- Detecting CUDA compile features
+-- Detecting CUDA compile features - done
+-- Using CMAKE_CUDA_ARCHITECTURES=89-real CMAKE_CUDA_ARCHITECTURES_NATIVE=89-real
+-- CUDA host compiler is GNU 13.3.0
+-- Including CUDA backend
+-- ggml version: 0.9.11
+-- ggml commit:  c08d28d08
+-- Could NOT find OpenSSL, try to set the path to OpenSSL root folder in the system variable OPENSSL_ROOT_DIR (missing: OPENSSL_CRYPTO_LIBRARY OPENSSL_INCLUDE_DIR) 
+CMake Warning at vendor/cpp-httplib/CMakeLists.txt:150 (message):
+  OpenSSL not found, HTTPS support disabled
+
+
+-- Generating embedded license file for target: common
+-- Configuring done (4.0s)
+-- Generating done (0.1s)
+-- Build files have been written to: /home/fred/Documents/GitHub/cycleuser/MoXing/build_linux_cuda
+Compiling...
+[100%] Built target llama-bench
+[  0%] Built target cpp-httplib
+[  0%] Built target build_info
+[  2%] Built target ggml-base
+[  7%] Built target ggml-cpu
+[ 47%] Built target ggml-cuda
+[ 48%] Built target ggml
+[ 90%] Built target llama
+[100%] Built target common
+[100%] Building CXX object tools/quantize/CMakeFiles/llama-quantize.dir/quantize.cpp.o
+[100%] Linking CXX executable ../../bin/llama-quantize
+[100%] Built target llama-quantize
+[  5%] Built target ggml-base
+[ 14%] Built target ggml-cpu
+[ 94%] Built target ggml-cuda
+[ 97%] Built target ggml
+[100%] Building CXX object examples/gguf/CMakeFiles/llama-gguf.dir/gguf.cpp.o
+[100%] Linking CXX executable ../../bin/llama-gguf
+[100%] Built target llama-gguf
+[  0%] Built target build_info
+[  0%] Built target cpp-httplib
+[  2%] Built target ggml-base
+[  7%] Built target ggml-cpu
+[ 46%] Built target ggml-cuda
+[ 47%] Built target ggml
+[ 88%] Built target llama
+[ 98%] Built target common
+[100%] Building CXX object tools/gguf-split/CMakeFiles/llama-gguf-split.dir/gguf-split.cpp.o
+[100%] Linking CXX executable ../../bin/llama-gguf-split
+[100%] Built target llama-gguf-split
+total 8
+drwxrwxr-x 2 fred fred 4096  4月  5 19:13 .
+drwxrwxr-x 4 fred fred 4096  4月  5 19:13 ..
+linux-x64-cuda build complete
+Building Linux ROCm...
+========================================
+Building: linux-x64-rocm
+========================================
+-- The HIP compiler identification is Clang 22.0.0
+-- Detecting HIP compiler ABI info
+-- Detecting HIP compiler ABI info - done
+-- Check for working HIP compiler: /opt/rocm/core-7.12/lib/llvm/bin/clang++ - skipped
+-- Detecting HIP compile features
+-- Detecting HIP compile features - done
+-- HIP_PLATFORM using HIPCONFIG_EXEC: amd
+-- HIP and hipBLAS found
+-- Including HIP backend
+-- ggml version: 0.9.11
+-- ggml commit:  c08d28d08
+-- Could NOT find OpenSSL, try to set the path to OpenSSL root folder in the system variable OPENSSL_ROOT_DIR (missing: OPENSSL_CRYPTO_LIBRARY OPENSSL_INCLUDE_DIR) 
+CMake Warning at vendor/cpp-httplib/CMakeLists.txt:150 (message):
+  OpenSSL not found, HTTPS support disabled
+
+
+-- Generating embedded license file for target: common
+-- Configuring done (1.7s)
+-- Generating done (0.1s)
+-- Build files have been written to: /home/fred/Documents/GitHub/cycleuser/MoXing/build_linux_rocm
+Compiling...
+[100%] Built target llama-bench
+[  0%] Built target build_info
+[  0%] Built target cpp-httplib
+[  2%] Built target ggml-base
+[  7%] Built target ggml-cpu
+[ 47%] Built target ggml-hip
+[ 48%] Built target ggml
+[ 90%] Built target llama
+[100%] Built target common
+[100%] Building CXX object tools/quantize/CMakeFiles/llama-quantize.dir/quantize.cpp.o
+[100%] Linking CXX executable ../../bin/llama-quantize
+[100%] Built target llama-quantize
+[  5%] Built target ggml-base
+[ 14%] Built target ggml-cpu
+[ 94%] Built target ggml-hip
+[ 97%] Built target ggml
+[100%] Building CXX object examples/gguf/CMakeFiles/llama-gguf.dir/gguf.cpp.o
+[100%] Linking CXX executable ../../bin/llama-gguf
+[100%] Built target llama-gguf
+[  0%] Built target build_info
+[  0%] Built target cpp-httplib
+[  2%] Built target ggml-base
+[ 11%] Built target ggml-cpu
+[ 46%] Built target ggml-hip
+[ 47%] Built target ggml
+[ 88%] Built target llama
+[ 98%] Built target common
+[100%] Building CXX object tools/gguf-split/CMakeFiles/llama-gguf-split.dir/gguf-split.cpp.o
+[100%] Linking CXX executable ../../bin/llama-gguf-split
+[100%] Built target llama-gguf-split
+total 8
+drwxrwxr-x 2 fred fred 4096  4月  5 19:16 .
+drwxrwxr-x 5 fred fred 4096  4月  5 19:16 ..
+linux-x64-rocm build complete
+Building Linux Vulkan...
+========================================
+Building: linux-x64-vulkan
+========================================
+-- x86 detected
+-- Adding CPU backend variant ggml-cpu: -march=native 
+-- Found Vulkan: /usr/lib/x86_64-linux-gnu/libvulkan.so (found version "1.3.275") found components: glslc glslangValidator 
+-- Vulkan found
+-- GL_KHR_cooperative_matrix supported by glslc
+-- GL_NV_cooperative_matrix2 not supported by glslc
+-- GL_EXT_integer_dot_product not supported by glslc
+-- GL_EXT_bfloat16 not supported by glslc
+-- Including Vulkan backend
+-- ggml version: 0.9.11
+-- ggml commit:  c08d28d08
+-- Could NOT find OpenSSL, try to set the path to OpenSSL root folder in the system variable OPENSSL_ROOT_DIR (missing: OPENSSL_CRYPTO_LIBRARY OPENSSL_INCLUDE_DIR) 
+CMake Warning at vendor/cpp-httplib/CMakeLists.txt:150 (message):
+  OpenSSL not found, HTTPS support disabled
+
+
+-- Generating embedded license file for target: common
+-- Configuring done (0.9s)
+-- Generating done (0.1s)
+-- Build files have been written to: /home/fred/Documents/GitHub/cycleuser/MoXing/build_linux_vulkan
+Compiling...
