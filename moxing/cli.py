@@ -1784,7 +1784,7 @@ def serve_with_ollama_backend(
     gpu_idx = None
     
     if backend == "cuda":
-        env["OLLAMA_LLM_LIBRARY"] = "cuda_v13"
+        env["OLLAMA_LLM_LIBRARY"] = "cuda_v12"
         backend_str = "CUDA"
     elif backend == "rocm":
         env["OLLAMA_LLM_LIBRARY"] = "rocm"
