@@ -282,6 +282,7 @@ class OllamaRunnerDownloader:
         },
         "windows-x64": {
             "cuda": "ollama-windows-amd64.zip",
+            "vulkan": "ollama-windows-amd64.zip",
             "cpu": "ollama-windows-amd64.zip",
             "rocm": "ollama-windows-amd64-rocm.zip",
             "mlx": "ollama-windows-amd64-mlx.zip",
@@ -662,21 +663,31 @@ class OllamaRunnerServer:
                     console.print(f"[blue]使用 ROCm GPU {gpu_id}[/blue]")
         
         elif backend == "cuda":
-            # CUDA 库路径
             cuda_paths = [
                 "/usr/local/cuda/lib64",
+                "/usr/local/cuda-12.8/lib64",
+                "/usr/local/cuda-12.6/lib64",
+                "/usr/local/cuda-12.5/lib64",
+                "/usr/local/cuda-12.4/lib64",
+                "/usr/local/cuda-12.3/lib64",
+                "/usr/local/cuda-12.2/lib64",
+                "/usr/local/cuda-12.1/lib64",
+                "/usr/local/cuda-12.0/lib64",
                 "/usr/local/cuda-13.2/lib64",
             ]
             for path in cuda_paths:
                 if os.path.exists(path):
                     lib_paths.append(path)
             
-            # 设置 CUDA 设备
             if self.config.device.startswith("gpu"):
                 gpu_id = int(self.config.device.replace("gpu", ""))
                 env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
                 if self.verbose:
                     console.print(f"[blue]使用 CUDA GPU {gpu_id}[/blue]")
+        
+        elif backend == "vulkan":
+            if self.verbose:
+                console.print(f"[blue]使用 Vulkan GPU 后端[/blue]")
         
         # 合并库路径
         if "LD_LIBRARY_PATH" in env:
