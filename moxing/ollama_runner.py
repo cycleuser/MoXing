@@ -48,12 +48,24 @@ class RunnerConfig:
     n_gpu_layers: int = -1
     threads: int = 0
     batch_size: int = 2048
+    ubatch_size: int = 512
     flash_attn: bool = True
     kv_cache: str = "f16"
     backend_index: int = -1
     runner_type: str = "ollama"
     verbose_runner: bool = False
     fit_mode: str = "auto"
+    lookahead: int = 0
+    cache_prompts: bool = False
+    slots: int = 1
+    cont_batching: bool = True
+    mlock: bool = False
+    no_kv_offload: bool = False
+    rope_scaling: str = "none"
+    rope_scale: float = 1.0
+    speculative_draft: Optional[str] = None
+    speculative_max: int = 5
+    speculative_pmin: float = 0.75
 
 
 class OllamaModelResolver:
@@ -616,6 +628,10 @@ class OllamaRunnerServer:
         if self.config.batch_size > 0:
             cmd.extend(["-b", str(self.config.batch_size)])
         
+        # UBatch 大小
+        if self.config.ubatch_size > 0:
+            cmd.extend(["-ub", str(self.config.ubatch_size)])
+        
         # KV 缓存类型
         if self.config.kv_cache and self.config.kv_cache not in ("f16", "auto"):
             cmd.extend(["-ctk", self.config.kv_cache])
@@ -624,6 +640,43 @@ class OllamaRunnerServer:
         # Fit 模式
         if self.config.fit_mode and self.config.fit_mode != "auto":
             cmd.extend(["--fit", self.config.fit_mode])
+        
+        # Lookahead 解码
+        if self.config.lookahead > 0:
+            cmd.extend(["--lookahead", str(self.config.lookahead)])
+        
+        # Prompt 缓存
+        if self.config.cache_prompts:
+            cmd.append("--cache-prompts")
+        
+        # 并发槽位
+        if self.config.slots > 1:
+            cmd.extend(["--slots", str(self.config.slots)])
+        
+        # 连续批处理
+        if self.config.cont_batching:
+            cmd.append("--cont-batching")
+        
+        # 内存锁定
+        if self.config.mlock:
+            cmd.append("--mlock")
+        
+        # 禁用 KV offload
+        if self.config.no_kv_offload:
+            cmd.append("--no-kv-offload")
+        
+        # RoPE 缩放
+        if self.config.rope_scaling != "none":
+            cmd.extend(["--rope-scaling", self.config.rope_scaling])
+        
+        if self.config.rope_scale != 1.0:
+            cmd.extend(["--rope-scale", str(self.config.rope_scale)])
+        
+        # 推测解码
+        if self.config.speculative_draft:
+            cmd.extend(["--draft", self.config.speculative_draft])
+            cmd.extend(["--draft-max", str(self.config.speculative_max)])
+            cmd.extend(["--draft-p-min", str(self.config.speculative_pmin)])
         
         # Runner verbose
         if self.config.verbose_runner:
@@ -769,6 +822,17 @@ def serve_ollama_model(
     runner_type: str = "ollama",
     verbose_runner: bool = False,
     fit_mode: str = "auto",
+    lookahead: int = 0,
+    cache_prompts: bool = False,
+    slots: int = 1,
+    cont_batching: bool = True,
+    mlock: bool = False,
+    no_kv_offload: bool = False,
+    rope_scaling: str = "none",
+    rope_scale: float = 1.0,
+    speculative_draft: Optional[str] = None,
+    speculative_max: int = 5,
+    speculative_pmin: float = 0.75,
     **kwargs
 ) -> Optional[OllamaRunnerServer]:
     """
@@ -787,6 +851,17 @@ def serve_ollama_model(
         runner_type: runner 类型 ("ollama" 或 "official")
         verbose_runner: runner 详细日志
         fit_mode: 参数拟合模式 ("auto", "on", "off")
+        lookahead: 前瞻解码步数 (0=禁用, 2-4推荐)
+        cache_prompts: 启用提示词缓存
+        slots: 并发请求槽位数
+        cont_batching: 启用连续批处理
+        mlock: 锁定模型在内存中
+        no_kv_offload: 禁用KV缓存卸载到CPU
+        rope_scaling: RoPE缩放类型
+        rope_scale: RoPE上下文缩放因子
+        speculative_draft: 推测解码draft模型路径
+        speculative_max: 最大draft token数
+        speculative_pmin: 最小接受概率
         
     Returns:
         OllamaRunnerServer 实例
@@ -837,6 +912,17 @@ def serve_ollama_model(
         runner_type=runner_type,
         verbose_runner=verbose_runner or verbose,
         fit_mode=fit_mode,
+        lookahead=lookahead,
+        cache_prompts=cache_prompts,
+        slots=slots,
+        cont_batching=cont_batching,
+        mlock=mlock,
+        no_kv_offload=no_kv_offload,
+        rope_scaling=rope_scaling,
+        rope_scale=rope_scale,
+        speculative_draft=speculative_draft,
+        speculative_max=speculative_max,
+        speculative_pmin=speculative_pmin,
         **kwargs
     )
     
