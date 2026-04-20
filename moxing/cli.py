@@ -115,6 +115,27 @@ def serve(
     kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q5_0, q4_0, tq4, tq3.5, tq3, tq2.5, tq2"),
     cpu_offload: int = typer.Option(0, "--cpu-offload", help="Number of layers to offload to CPU (0=auto)"),
     analyze_cache: bool = typer.Option(False, "--analyze-cache", help="Show KV cache analysis and exit"),
+    speculative_draft: Optional[str] = typer.Option(None, "--draft", help="Draft model path for speculative decoding"),
+    speculative_max: int = typer.Option(5, "--draft-max", help="Max draft tokens (speculative decoding)"),
+    speculative_min: int = typer.Option(0, "--draft-min", help="Min draft tokens (0=auto)"),
+    speculative_pmin: float = typer.Option(0.75, "--draft-p-min", help="Min acceptance probability for draft tokens"),
+    lookahead: int = typer.Option(0, "--lookahead", help="Lookahead decoding steps (0=disabled, 2-4 recommended)"),
+    cache_prompts: bool = typer.Option(False, "--cache-prompts", help="Enable prompt caching for repeated system prompts"),
+    cache_rem: str = typer.Option("lru", "--cache-rem", help="Cache removal policy: lru, lru-sc, fifo"),
+    slots: int = typer.Option(1, "--slots", help="Number of parallel slots for concurrent requests"),
+    cont_batching: bool = typer.Option(True, "--cont-batching/--no-cont-batching", help="Enable continuous batching"),
+    mlock: bool = typer.Option(False, "--mlock", help="Lock model in RAM to prevent swapping"),
+    no_kv_offload: bool = typer.Option(False, "--no-kv-offload", help="Disable KV cache offloading to CPU (force GPU)"),
+    tensor_split: Optional[str] = typer.Option(None, "--tensor-split", help="GPU memory split ratios (e.g., '50,50' for 2 GPUs)"),
+    main_gpu: int = typer.Option(0, "--main-gpu", help="Main GPU index for tensor parallelism (0-based)"),
+    numa: Optional[str] = typer.Option(None, "--numa", help="NUMA policy: none, distribute, isolate, numactl"),
+    defrag_thold: float = typer.Option(0.1, "--defrag-thold", help="Memory defragmentation threshold (0=disabled)"),
+    rope_scaling: str = typer.Option("none", "--rope-scaling", help="RoPE scaling: none, linear, yarn"),
+    rope_scale: float = typer.Option(1.0, "--rope-scale", help="RoPE context scaling factor (e.g., 2.0 for 2x context)"),
+    parallel: int = typer.Option(1, "--parallel", help="Number of parallel sequences"),
+    mirostat: int = typer.Option(0, "--mirostat", help="Mirostat sampling: 0=disabled, 1=mirostat, 2=mirostat 2.0"),
+    mirostat_tau: float = typer.Option(5.0, "--mirostat-tau", help="Mirostat target perplexity"),
+    mirostat_eta: float = typer.Option(0.1, "--mirostat-eta", help="Mirostat learning rate"),
 ):
     """Start the LLM server with automatic configuration.
     
@@ -142,14 +163,35 @@ def serve(
     
     Memory Optimization:
     - --cpu-offload N: Offload N layers to CPU RAM
-    - Use with large models when GPU memory is limited
+    - --mlock: Lock model in RAM to prevent swapping
+    - --no-kv-offload: Force KV cache to stay on GPU
+    
+    Speed Optimization:
+    - --draft MODEL: Speculative decoding with draft model (2-4x speedup)
+    - --lookahead N: Lookahead decoding without extra model (1.5-2x speedup)
+    - --cache-prompts: Cache repeated system prompts
+    - --cont-batching: Enable continuous batching for concurrent requests
+    - --slots N: Number of parallel request slots
+    
+    Multi-GPU:
+    - --tensor-split R: Split model across GPUs (e.g., '50,50')
+    - --main-gpu N: Set main GPU index
+    
+    Context Extension:
+    - --rope-scaling TYPE: RoPE scaling (linear/yarn)
+    - --rope-scale N: Context scaling factor (2.0 = 2x context)
     
     Examples:
     - Auto KV cache: moxing serve model.gguf
     - 4-bit cache: moxing serve model.gguf --kv-cache q4_0
     - TurboQuant 3.5: moxing serve model.gguf --kv-cache tq3.5
     - CPU offload: moxing serve model.gguf --cpu-offload 10
-    - Analyze cache: moxing serve model.gguf --analyze-cache
+    - Speculative: moxing serve model.gguf --draft small-model.gguf
+    - Lookahead: moxing serve model.gguf --lookahead 3
+    - Prompt cache: moxing serve model.gguf --cache-prompts
+    - Multi-slot: moxing serve model.gguf --slots 4
+    - Multi-GPU: moxing serve model.gguf --tensor-split 50,50
+    - Extended context: moxing serve model.gguf --rope-scaling yarn --rope-scale 4
     - LAN access: moxing serve model.gguf --host 0.0.0.0
     """
     from moxing.runner import AutoRunner
@@ -362,6 +404,27 @@ def serve(
                 kv_cache_quant=kv_cache,
                 cpu_offload=cpu_offload > 0,
                 cpu_offload_layers=cpu_offload,
+                speculative_draft=speculative_draft,
+                speculative_max=speculative_max,
+                speculative_min=speculative_min,
+                speculative_pmin=speculative_pmin,
+                lookahead=lookahead,
+                cache_prompts=cache_prompts,
+                cache_rem=cache_rem,
+                slots=slots,
+                cont_batching=cont_batching,
+                mlock=mlock,
+                no_kv_offload=no_kv_offload,
+                tensor_split=tensor_split,
+                main_gpu=main_gpu,
+                numa=numa,
+                defrag_thold=defrag_thold,
+                rope_scaling=rope_scaling,
+                rope_scale=rope_scale,
+                parallel=parallel,
+                mirostat=mirostat,
+                mirostat_tau=mirostat_tau,
+                mirostat_eta=mirostat_eta,
             )
             
             cache_info = f"\n[dim]KV Cache: {kv_cache}" if kv_cache != "auto" else ""
@@ -431,6 +494,11 @@ def run(
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, vulkan, cuda, metal, cpu"),
     kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization"),
     host: str = typer.Option("127.0.0.1", "--host", help="Server host (use 0.0.0.0 for LAN access)"),
+    lookahead: int = typer.Option(0, "--lookahead", help="Lookahead decoding steps (0=disabled, 2-4 recommended)"),
+    mlock: bool = typer.Option(False, "--mlock", help="Lock model in RAM to prevent swapping"),
+    no_kv_offload: bool = typer.Option(False, "--no-kv-offload", help="Disable KV cache offloading to CPU"),
+    rope_scaling: str = typer.Option("none", "--rope-scaling", help="RoPE scaling: none, linear, yarn"),
+    rope_scale: float = typer.Option(1.0, "--rope-scale", help="RoPE context scaling factor"),
 ):
     """Run inference with a model (auto-downloads if needed).
     
@@ -438,12 +506,22 @@ def run(
     - 127.0.0.1 (default): Local access only
     - 0.0.0.0: Allow LAN access (all network interfaces)
     
+    Speed Optimization:
+    - --lookahead N: Lookahead decoding (1.5-2x speedup, no extra model needed)
+    - --mlock: Lock model in RAM to prevent swapping
+    - --no-kv-offload: Force KV cache to stay on GPU
+    
+    Context Extension:
+    - --rope-scaling TYPE: RoPE scaling (linear/yarn)
+    - --rope-scale N: Context scaling factor (2.0 = 2x context)
+    
     Examples:
         moxing run model.gguf                    # Interactive chat
         moxing run model.gguf -p "Hello"         # Single prompt
         moxing run model.gguf -v                 # Verbose monitoring
         moxing run model.gguf -p "Hello" -v      # Single prompt with stats
         moxing run model.gguf --kv-cache tq3.5   # With TurboQuant
+        moxing run model.gguf --lookahead 3      # With lookahead decoding
         moxing run model.gguf --host 0.0.0.0     # LAN access
     """
     from moxing.runner import AutoRunner
@@ -462,7 +540,12 @@ def run(
             backend=backend,
             kv_cache_quant=kv_cache,
             port=port,
-            host=host
+            host=host,
+            lookahead=lookahead,
+            mlock=mlock,
+            no_kv_offload=no_kv_offload,
+            rope_scaling=rope_scaling,
+            rope_scale=rope_scale,
         )
         
         model_name = Path(model).name if Path(model).exists() else model
@@ -1687,6 +1770,16 @@ def ollama_serve(
     batch_size: int = typer.Option(2048, "--batch-size", help="Batch size for prompt processing"),
     ubatch_size: int = typer.Option(512, "--ubatch-size", help="Physical batch size"),
     flash_attn: bool = typer.Option(True, "--flash-attn/--no-flash-attn", help="Enable flash attention"),
+    # Speed optimization options
+    lookahead: int = typer.Option(0, "--lookahead", help="Lookahead decoding steps (0=disabled, 2-4 recommended)"),
+    cache_prompts: bool = typer.Option(False, "--cache-prompts", help="Enable prompt caching for repeated system prompts"),
+    slots: int = typer.Option(1, "--slots", help="Number of parallel slots for concurrent requests"),
+    cont_batching: bool = typer.Option(True, "--cont-batching/--no-cont-batching", help="Enable continuous batching"),
+    mlock: bool = typer.Option(False, "--mlock", help="Lock model in RAM to prevent swapping"),
+    no_kv_offload: bool = typer.Option(False, "--no-kv-offload", help="Disable KV cache offloading to CPU (force GPU)"),
+    speculative_draft: Optional[str] = typer.Option(None, "--draft", help="Draft model path for speculative decoding"),
+    speculative_max: int = typer.Option(5, "--draft-max", help="Max draft tokens (speculative decoding)"),
+    speculative_pmin: float = typer.Option(0.75, "--draft-p-min", help="Min acceptance probability for draft tokens"),
 ):
     """Serve an Ollama model with OpenAI-compatible API.
     
@@ -1723,6 +1816,19 @@ def ollama_serve(
     - N: Offload N layers to CPU, rest to GPU
     - Use --prompt-offload to be asked before offloading
     
+    Speed Optimization:
+    - --draft MODEL: Speculative decoding with draft model (2-4x speedup)
+    - --lookahead N: Lookahead decoding without extra model (1.5-2x speedup)
+    - --cache-prompts: Cache repeated system prompts
+    - --cont-batching: Enable continuous batching for concurrent requests
+    - --slots N: Number of parallel request slots
+    - --mlock: Lock model in RAM to prevent swapping
+    - --no-kv-offload: Force KV cache to stay on GPU
+    
+    Context Extension:
+    - --rope-scaling TYPE: RoPE scaling (linear/yarn)
+    - --rope-scale N: Context scaling factor (2.0 = 2x context)
+    
     Performance Tips:
     - Default context is 32K (optimized for speed)
     - Use --flash-attn for faster attention (enabled by default)
@@ -1741,8 +1847,11 @@ def ollama_serve(
         moxing ollama serve omnicoder-9b -v    # Verbose monitoring
         moxing ollama serve omnicoder-9b -w    # Web monitoring
         moxing ollama serve omnicoder-9b --host 0.0.0.0  # LAN access
+        moxing ollama serve model --lookahead 3  # Lookahead decoding
+        moxing ollama serve model --cache-prompts  # Prompt caching
+        moxing ollama serve model --draft small.gguf  # Speculative decoding
     """
-    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor, skip_check, kv_cache, cpu_offload, prompt_offload, rope_scaling, rope_scale, threads, batch_size, ubatch_size, flash_attn, runner_type, runner_verbose, fit_mode)
+    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor, skip_check, kv_cache, cpu_offload, prompt_offload, rope_scaling, rope_scale, threads, batch_size, ubatch_size, flash_attn, runner_type, runner_verbose, fit_mode, lookahead, cache_prompts, slots, cont_batching, mlock, no_kv_offload, speculative_draft, speculative_max, speculative_pmin)
 
 
 def serve_with_ollama_backend(
@@ -1967,6 +2076,15 @@ def ollama_serve_impl(
     runner_type: str = "ollama",
     runner_verbose: bool = False,
     fit_mode: str = "auto",
+    lookahead: int = 0,
+    cache_prompts: bool = False,
+    slots: int = 1,
+    cont_batching: bool = True,
+    mlock: bool = False,
+    no_kv_offload: bool = False,
+    speculative_draft: Optional[str] = None,
+    speculative_max: int = 5,
+    speculative_pmin: float = 0.75,
 ):
     """Serve an Ollama model using moxing's Ollama runner.
     
@@ -2029,6 +2147,15 @@ def ollama_serve_impl(
         batch_size=batch_size,
         flash_attn=flash_attn,
         kv_cache=kv_cache,
+        lookahead=lookahead,
+        cache_prompts=cache_prompts,
+        slots=slots,
+        cont_batching=cont_batching,
+        mlock=mlock,
+        no_kv_offload=no_kv_offload,
+        speculative_draft=speculative_draft,
+        speculative_max=speculative_max,
+        speculative_pmin=speculative_pmin,
     )
     
     if not server:

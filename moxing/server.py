@@ -65,6 +65,7 @@ class ServerConfig:
     n_cpu_layers: int = 0
     n_threads: int = -1
     batch_size: int = 512
+    ubatch_size: int = 512
     flash_attn: bool = True
     device: str = "auto"
     verbose: bool = False
@@ -73,6 +74,27 @@ class ServerConfig:
     kv_cache_quant: str = "auto"
     cpu_offload: bool = False
     cpu_offload_layers: int = 0
+    speculative_draft: Optional[str] = None
+    speculative_max: int = 5
+    speculative_min: int = 0
+    speculative_pmin: float = 0.75
+    lookahead: int = 0
+    cache_prompts: bool = False
+    cache_rem: str = "lru"
+    slots: int = 1
+    cont_batching: bool = True
+    mlock: bool = False
+    no_kv_offload: bool = False
+    tensor_split: Optional[str] = None
+    main_gpu: int = 0
+    numa: Optional[str] = None
+    defrag_thold: float = 0.1
+    rope_scaling: str = "none"
+    rope_scale: float = 1.0
+    parallel: int = 1
+    mirostat: int = 0
+    mirostat_tau: float = 5.0
+    mirostat_eta: float = 0.1
 
 
 def _find_binary(backend: str = "auto", runner: str = "official") -> Path:
@@ -107,6 +129,27 @@ class LlamaServer:
         cpu_offload_layers: int = 0,
         prompt_offload: bool = False,
         quiet: bool = False,
+        speculative_draft: Optional[str] = None,
+        speculative_max: int = 5,
+        speculative_min: int = 0,
+        speculative_pmin: float = 0.75,
+        lookahead: int = 0,
+        cache_prompts: bool = False,
+        cache_rem: str = "lru",
+        slots: int = 1,
+        cont_batching: bool = True,
+        mlock: bool = False,
+        no_kv_offload: bool = False,
+        tensor_split: Optional[str] = None,
+        main_gpu: int = 0,
+        numa: Optional[str] = None,
+        defrag_thold: float = 0.1,
+        rope_scaling: str = "none",
+        rope_scale: float = 1.0,
+        parallel: int = 1,
+        mirostat: int = 0,
+        mirostat_tau: float = 5.0,
+        mirostat_eta: float = 0.1,
         **kwargs
     ):
         model_path = Path(model)
@@ -135,6 +178,28 @@ class LlamaServer:
         self.prompt_offload = prompt_offload
         self.quiet = quiet
         self.extra_args = kwargs
+        
+        self.speculative_draft = speculative_draft
+        self.speculative_max = speculative_max
+        self.speculative_min = speculative_min
+        self.speculative_pmin = speculative_pmin
+        self.lookahead = lookahead
+        self.cache_prompts = cache_prompts
+        self.cache_rem = cache_rem
+        self.slots = slots
+        self.cont_batching = cont_batching
+        self.mlock = mlock
+        self.no_kv_offload = no_kv_offload
+        self.tensor_split = tensor_split
+        self.main_gpu = main_gpu
+        self.numa = numa
+        self.defrag_thold = defrag_thold
+        self.rope_scaling = rope_scaling
+        self.rope_scale = rope_scale
+        self.parallel = parallel
+        self.mirostat = mirostat
+        self.mirostat_tau = mirostat_tau
+        self.mirostat_eta = mirostat_eta
         
         self.ctx_size = ctx_size if ctx_size > 0 else 4096
         
@@ -277,6 +342,58 @@ class LlamaServer:
         
         kv_cache_args = self._get_kv_cache_args()
         args.extend(kv_cache_args)
+        
+        if self.speculative_draft:
+            args.extend(["--draft", self.speculative_draft])
+            args.extend(["--draft-max", str(self.speculative_max)])
+            if self.speculative_min > 0:
+                args.extend(["--draft-min", str(self.speculative_min)])
+            args.extend(["--draft-p-min", str(self.speculative_pmin)])
+        
+        if self.lookahead > 0:
+            args.extend(["--lookahead", str(self.lookahead)])
+        
+        if self.cache_prompts:
+            args.append("--cache-prompts")
+            args.extend(["--cache-rem", self.cache_rem])
+        
+        if self.slots > 1:
+            args.extend(["--slots", str(self.slots)])
+        
+        if self.cont_batching:
+            args.append("--cont-batching")
+        
+        if self.mlock:
+            args.append("--mlock")
+        
+        if self.no_kv_offload:
+            args.append("--no-kv-offload")
+        
+        if self.tensor_split:
+            args.extend(["--tensor-split", self.tensor_split])
+        
+        if self.main_gpu > 0:
+            args.extend(["--main-gpu", str(self.main_gpu)])
+        
+        if self.numa:
+            args.extend(["--numa", self.numa])
+        
+        if self.defrag_thold > 0:
+            args.extend(["--defrag-thold", str(self.defrag_thold)])
+        
+        if self.rope_scaling != "none":
+            args.extend(["--rope-scaling", self.rope_scaling])
+        
+        if self.rope_scale != 1.0:
+            args.extend(["--rope-scale", str(self.rope_scale)])
+        
+        if self.parallel > 1:
+            args.extend(["--parallel", str(self.parallel)])
+        
+        if self.mirostat > 0:
+            args.extend(["--mirostat", str(self.mirostat)])
+            args.extend(["--mirostat-tau", str(self.mirostat_tau)])
+            args.extend(["--mirostat-eta", str(self.mirostat_eta)])
         
         for key, value in self.extra_args.items():
             key = key.replace("_", "-")
