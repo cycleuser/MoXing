@@ -66,6 +66,7 @@ class RunnerConfig:
     speculative_draft: Optional[str] = None
     speculative_max: int = 5
     speculative_pmin: float = 0.75
+    cpu_moe: bool = False
 
 
 class OllamaModelResolver:
@@ -611,7 +612,10 @@ class OllamaRunnerServer:
         ]
         
         # GPU 层数
-        if self.config.n_gpu_layers >= 0:
+        if self.config.cpu_moe:
+            cmd.extend(["-ngl", "999"])
+            cmd.append("--cpu-moe")
+        elif self.config.n_gpu_layers >= 0:
             cmd.extend(["-ngl", str(self.config.n_gpu_layers)])
         else:
             cmd.extend(["-ngl", "999"])  # 默认全部 GPU
@@ -833,6 +837,13 @@ def serve_ollama_model(
     speculative_draft: Optional[str] = None,
     speculative_max: int = 5,
     speculative_pmin: float = 0.75,
+    cpu_moe: bool = False,
+    threads: int = 0,
+    batch_size: int = 2048,
+    ubatch_size: int = 512,
+    flash_attn: bool = True,
+    kv_cache: str = "f16",
+    n_gpu_layers: int = -1,
     **kwargs
 ) -> Optional[OllamaRunnerServer]:
     """
@@ -908,6 +919,12 @@ def serve_ollama_model(
         port=port,
         host=host,
         ctx_size=ctx_size,
+        n_gpu_layers=n_gpu_layers,
+        threads=threads,
+        batch_size=batch_size,
+        ubatch_size=ubatch_size,
+        flash_attn=flash_attn,
+        kv_cache=kv_cache,
         backend_index=backend_index,
         runner_type=runner_type,
         verbose_runner=verbose_runner or verbose,
@@ -923,6 +940,7 @@ def serve_ollama_model(
         speculative_draft=speculative_draft,
         speculative_max=speculative_max,
         speculative_pmin=speculative_pmin,
+        cpu_moe=cpu_moe,
         **kwargs
     )
     

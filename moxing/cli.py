@@ -1879,6 +1879,7 @@ def ollama_serve(
     skip_check: bool = typer.Option(False, "--skip-check", help="Skip compatibility check"),
     kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q4_0, tq4, tq3.5, tq3, tq2.5, tq2"),
     cpu_offload: int = typer.Option(0, "--cpu-offload", help="Number of layers to offload to CPU (0=auto)"),
+    cpu_moe: bool = typer.Option(False, "--cpu-moe", help="Offload MoE experts to CPU, keep attention on GPU (7-8x speedup for MoE models)"),
     prompt_offload: bool = typer.Option(False, "--prompt-offload", help="Prompt for CPU offload if needed"),
     rope_scaling: str = typer.Option("none", "--rope-scaling", help="RoPE scaling: none, linear, yarn (for extending context)"),
     rope_scale: float = typer.Option(1.0, "--rope-scale", help="RoPE context scaling factor (e.g., 2.0 for 2x context)"),
@@ -1931,6 +1932,7 @@ def ollama_serve(
     CPU Offload:
     - 0: Auto-detect if needed (default, uses full GPU if possible)
     - N: Offload N layers to CPU, rest to GPU
+    - --cpu-moe: Offload MoE experts to CPU, keep attention on GPU (7-8x speedup)
     - Use --prompt-offload to be asked before offloading
     
     Speed Optimization:
@@ -1959,6 +1961,7 @@ def ollama_serve(
         moxing ollama serve gemma4:31b --runner-verbose --fit off  # Debug mode
         moxing ollama serve omnicoder-9b --kv-cache q4_0
         moxing ollama serve omnicoder-9b --cpu-offload 10
+        moxing ollama serve qwen3:30b-a3b --cpu-moe  # MoE offloading
         moxing ollama serve model --prompt-offload
         moxing ollama serve gemma3:1b -c 65536 --kv-cache q4_0
         moxing ollama serve omnicoder-9b -v    # Verbose monitoring
@@ -1968,7 +1971,7 @@ def ollama_serve(
         moxing ollama serve model --cache-prompts  # Prompt caching
         moxing ollama serve model --draft small.gguf  # Speculative decoding
     """
-    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor, skip_check, kv_cache, cpu_offload, prompt_offload, rope_scaling, rope_scale, threads, batch_size, ubatch_size, flash_attn, runner_type, runner_verbose, fit_mode, lookahead, cache_prompts, slots, cont_batching, mlock, no_kv_offload, speculative_draft, speculative_max, speculative_pmin)
+    ollama_serve_impl(model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor, skip_check, kv_cache, cpu_offload, cpu_moe, prompt_offload, rope_scaling, rope_scale, threads, batch_size, ubatch_size, flash_attn, runner_type, runner_verbose, fit_mode, lookahead, cache_prompts, slots, cont_batching, mlock, no_kv_offload, speculative_draft, speculative_max, speculative_pmin)
 
 
 def serve_with_ollama_backend(
@@ -2183,6 +2186,7 @@ def ollama_serve_impl(
     skip_check: bool = False,
     kv_cache: str = "auto",
     cpu_offload: int = 0,
+    cpu_moe: bool = False,
     prompt_offload: bool = False,
     rope_scaling: str = "none",
     rope_scale: float = 1.0,
@@ -2238,6 +2242,17 @@ def ollama_serve_impl(
     console.print(f"[green]Found model: {model} ({file_size_gb:.1f} GB)[/green]")
     console.print(f"[dim]Path: {model_path}[/dim]")
     
+    # Auto-detect MoE and suggest cpu_moe if not explicitly set
+    if not cpu_moe:
+        try:
+            from moxing.gguf_metadata import extract_model_architecture
+            arch = extract_model_architecture(model_path)
+            if arch.is_moe and arch.expert_count > 0:
+                console.print(f"[yellow]MoE model detected: {arch.expert_count} experts, {arch.expert_used_count} active[/yellow]")
+                console.print(f"[yellow]Tip: Use --cpu-moe for 7-8x speedup on constrained hardware[/yellow]")
+        except Exception:
+            pass
+    
     # 自动检测后端
     if backend == "auto":
         from moxing.device import DeviceDetector
@@ -2259,11 +2274,13 @@ def ollama_serve_impl(
         runner_type=runner_type,
         verbose_runner=runner_verbose,
         fit_mode=fit_mode,
-        n_gpu_layers=-1 if cpu_offload == 0 else 999 - cpu_offload,
+        n_gpu_layers=-1 if cpu_offload == 0 and not cpu_moe else 999 - cpu_offload,
         threads=threads,
         batch_size=batch_size,
+        ubatch_size=ubatch_size,
         flash_attn=flash_attn,
         kv_cache=kv_cache,
+        cpu_moe=cpu_moe,
         lookahead=lookahead,
         cache_prompts=cache_prompts,
         slots=slots,
@@ -2759,6 +2776,127 @@ def ollama_run(
     finally:
         if server:
             server.stop()
+
+
+@ollama_app.command("tune")
+def ollama_tune(
+    model: str = typer.Argument(..., help="Ollama model name (e.g., gemma3:4b)"),
+    force: bool = typer.Option(False, "-f", "--force", help="Force re-tuning even if cache exists"),
+):
+    """Run warmup benchmark to find optimal parameters for an Ollama model.
+    
+    Measures actual performance to find the best configuration:
+    - Optimal context size
+    - Best ubatch size
+    - MoE offloading strategy
+    - KV cache type selection
+    
+    Results are cached for 30 days. Second launch skips warmup (2s startup).
+    
+    Examples:
+        moxing ollama tune qwen3:30b-a3b
+        moxing ollama tune gemma3:4b --force
+    """
+    from moxing.gguf_metadata import extract_model_architecture, should_use_cpu_moe
+    from moxing.warmup_benchmark import WarmupBenchmark, get_hardware_fingerprint, ProfileCache
+    from moxing.device import DeviceDetector
+    from moxing.binaries import get_binary_manager
+    from moxing.ollama_runner import OllamaModelResolver
+    
+    console.print(f"[blue]Looking up model: {model}[/blue]")
+    
+    resolver = OllamaModelResolver()
+    model_path = resolver.resolve(model)
+    
+    if not model_path:
+        console.print(f"[red]Model not found: {model}[/red]")
+        console.print("[dim]Run 'ollama pull {model}' to download[/dim]")
+        raise typer.Exit(1)
+    
+    console.print(f"[green]Found model: {model} ({model_path.stat().st_size / (1024**3):.1f} GB)[/green]")
+    console.print(f"[dim]Path: {model_path}[/dim]")
+    
+    console.print(f"\n[blue]Analyzing model architecture...[/blue]")
+    
+    try:
+        arch = extract_model_architecture(model_path)
+        console.print(f"[green]Architecture: {arch.architecture}[/green]")
+        console.print(f"[green]Parameters: {arch.parameter_count_b:.1f}B[/green]")
+        console.print(f"[green]Quantization: {arch.quantization}[/green]")
+        
+        if arch.is_moe:
+            console.print(f"[yellow]MoE detected: {arch.expert_count} experts, {arch.expert_used_count} active[/yellow]")
+            console.print(f"[yellow]Recommendation: Use --cpu-moe for 7-8x speedup on constrained hardware[/yellow]")
+        else:
+            console.print(f"[green]Dense model (no MoE)[/green]")
+    except Exception as e:
+        console.print(f"[yellow]Could not extract model architecture: {e}[/yellow]")
+        arch = None
+    
+    console.print(f"\n[blue]Detecting hardware...[/blue]")
+    detector = DeviceDetector()
+    devices = detector.detect()
+    
+    gpu_devices = [d for d in devices if d.backend.is_gpu()]
+    if not gpu_devices:
+        console.print("[yellow]No GPU detected, using CPU[/yellow]")
+        return
+    
+    best_gpu = max(gpu_devices, key=lambda d: d.free_memory_mb)
+    console.print(f"[green]Best GPU: {best_gpu.name} ({best_gpu.free_memory_gb:.1f}GB free)[/green]")
+    
+    hardware_fp = get_hardware_fingerprint(
+        gpu_backend=best_gpu.backend.value,
+        gpu_name=best_gpu.name,
+        gpu_vram_mb=best_gpu.free_memory_mb,
+    )
+    
+    cache = ProfileCache()
+    model_id = model.replace("/", "_").replace(":", "_")
+    hardware_fp_str = hardware_fp.to_hash()
+    
+    if not force:
+        cached = cache.load(model_id, hardware_fp_str)
+        if cached is not None:
+            console.print(f"\n[green]Using cached profile ({cached.measured_tps:.1f} tok/s)[/green]")
+            console.print(f"[dim]Context: {cached.ctx_size}, ubatch: {cached.ubatch_size}[/dim]")
+            if cached.cpu_moe:
+                console.print(f"[dim]MoE mode: CPU experts, GPU attention[/dim]")
+            console.print(f"\n[yellow]To re-tune, use: moxing ollama tune {model} --force[/yellow]")
+            return
+    
+    console.print(f"\n[blue]Running warmup benchmark...[/blue]")
+    
+    manager = get_binary_manager()
+    if not manager.has_binaries():
+        console.print("[blue]Downloading llama.cpp binaries...[/blue]")
+        manager.download_binaries()
+    
+    binary_path = manager.get_binary_path("llama-server")
+    
+    bench = WarmupBenchmark(
+        model_path=model_path,
+        binary_path=binary_path,
+        hardware_fp=hardware_fp,
+        cache=cache,
+    )
+    
+    profile = bench.run()
+    
+    if profile is not None:
+        console.print(f"\n[green bold]Optimal Configuration:[/green bold]")
+        console.print(f"[green]Context size: {profile.ctx_size}[/green]")
+        console.print(f"[green]ubatch size: {profile.ubatch_size}[/green]")
+        console.print(f"[green]Threads: {profile.n_threads}[/green]")
+        console.print(f"[green]Measured performance: {profile.measured_tps:.1f} tok/s[/green]")
+        
+        if profile.cpu_moe:
+            console.print(f"[yellow]MoE mode: CPU experts, GPU attention[/yellow]")
+            console.print(f"[yellow]Use: moxing ollama serve {model} --cpu-moe[/yellow]")
+        
+        console.print(f"\n[dim]Profile cached for 30 days[/dim]")
+    else:
+        console.print("[yellow]Benchmark failed, using default configuration[/yellow]")
 
 
 compress_app = typer.Typer(name="compress", help="GGUF compression commands")
