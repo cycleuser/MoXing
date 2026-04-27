@@ -74,6 +74,7 @@ class ServerConfig:
     kv_cache_quant: str = "auto"
     cpu_offload: bool = False
     cpu_offload_layers: int = 0
+    cpu_moe: bool = False
     speculative_draft: Optional[str] = None
     speculative_max: int = 5
     speculative_min: int = 0
@@ -95,6 +96,10 @@ class ServerConfig:
     mirostat: int = 0
     mirostat_tau: float = 5.0
     mirostat_eta: float = 0.1
+    fit_on: bool = True
+    kv_unified: bool = True
+    cache_reuse: int = 0
+    tune_config: Optional[Dict[str, Any]] = None
 
 
 def _find_binary(backend: str = "auto", runner: str = "official") -> Path:
@@ -127,6 +132,7 @@ class LlamaServer:
         kv_cache_quant: str = "auto",
         cpu_offload: bool = False,
         cpu_offload_layers: int = 0,
+        cpu_moe: bool = False,
         prompt_offload: bool = False,
         quiet: bool = False,
         speculative_draft: Optional[str] = None,
@@ -150,6 +156,13 @@ class LlamaServer:
         mirostat: int = 0,
         mirostat_tau: float = 5.0,
         mirostat_eta: float = 0.1,
+        batch_size: int = 512,
+        ubatch_size: int = 512,
+        n_threads: int = -1,
+        fit_on: bool = True,
+        kv_unified: bool = True,
+        cache_reuse: int = 0,
+        tune_config: Optional[Dict[str, Any]] = None,
         **kwargs
     ):
         model_path = Path(model)
@@ -175,8 +188,16 @@ class LlamaServer:
         self.kv_cache_quant = kv_cache_quant
         self.cpu_offload = cpu_offload
         self.cpu_offload_layers = cpu_offload_layers
+        self.cpu_moe = cpu_moe
         self.prompt_offload = prompt_offload
         self.quiet = quiet
+        self.batch_size = batch_size
+        self.ubatch_size = ubatch_size
+        self.n_threads = n_threads
+        self.fit_on = fit_on
+        self.kv_unified = kv_unified
+        self.cache_reuse = cache_reuse
+        self.tune_config = tune_config
         self.extra_args = kwargs
         
         self.speculative_draft = speculative_draft
@@ -318,8 +339,10 @@ class LlamaServer:
             "-c", str(self.ctx_size),
             "--metrics",
         ]
-        
-        if self.cpu_offload_layers > 0:
+
+        if self.cpu_moe:
+            args.extend(["-ngl", "999"])
+        elif self.cpu_offload_layers > 0:
             if self.n_gpu_layers > 0:
                 args.extend(["-ngl", str(self.n_gpu_layers)])
             else:
@@ -330,16 +353,37 @@ class LlamaServer:
             args.extend(["-ngl", "0"])
         else:
             args.extend(["-ngl", "auto"])
-        
+
         if self.device != "auto" and self.device != "CPU" and self.n_gpu_layers != 0:
             if self.gpu_backend in ["cuda", "rocm"]:
                 pass
             else:
                 args.extend(["-dev", self.device])
-        
+
         if self.gpu_backend not in ["auto", "cpu"]:
             os.environ["GGML_BACKEND"] = self.gpu_backend
-        
+
+        if self.n_threads > 0:
+            args.extend(["--threads", str(self.n_threads)])
+
+        if self.batch_size > 0:
+            args.extend(["--batch-size", str(self.batch_size)])
+
+        if self.ubatch_size > 0:
+            args.extend(["--ubatch-size", str(self.ubatch_size)])
+
+        if self.cpu_moe:
+            args.append("--cpu-moe")
+
+        if self.fit_on:
+            args.extend(["--fit", "on"])
+
+        if self.kv_unified:
+            args.append("--kv-unified")
+
+        if self.cache_reuse > 0:
+            args.extend(["--cache-reuse", str(self.cache_reuse)])
+
         kv_cache_args = self._get_kv_cache_args()
         args.extend(kv_cache_args)
         
