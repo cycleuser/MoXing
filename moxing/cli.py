@@ -114,6 +114,7 @@ def serve(
     force: bool = typer.Option(False, "-f", "--force", help="Force use specified backend without compatibility check"),
     kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization: auto, f16, q8_0, q5_0, q4_0, tq4, tq3.5, tq3, tq2.5, tq2"),
     cpu_offload: int = typer.Option(0, "--cpu-offload", help="Number of layers to offload to CPU (0=auto)"),
+    cpu_moe: bool = typer.Option(False, "--cpu-moe", help="Offload MoE experts to CPU, keep attention on GPU (7-8x speedup for MoE models)"),
     analyze_cache: bool = typer.Option(False, "--analyze-cache", help="Show KV cache analysis and exit"),
     speculative_draft: Optional[str] = typer.Option(None, "--draft", help="Draft model path for speculative decoding"),
     speculative_max: int = typer.Option(5, "--draft-max", help="Max draft tokens (speculative decoding)"),
@@ -163,6 +164,7 @@ def serve(
     
     Memory Optimization:
     - --cpu-offload N: Offload N layers to CPU RAM
+    - --cpu-moe: Offload MoE experts to CPU, keep attention on GPU (7-8x speedup)
     - --mlock: Lock model in RAM to prevent swapping
     - --no-kv-offload: Force KV cache to stay on GPU
     
@@ -186,6 +188,7 @@ def serve(
     - 4-bit cache: moxing serve model.gguf --kv-cache q4_0
     - TurboQuant 3.5: moxing serve model.gguf --kv-cache tq3.5
     - CPU offload: moxing serve model.gguf --cpu-offload 10
+    - MoE offload: moxing serve model.gguf --cpu-moe
     - Speculative: moxing serve model.gguf --draft small-model.gguf
     - Lookahead: moxing serve model.gguf --lookahead 3
     - Prompt cache: moxing serve model.gguf --cache-prompts
@@ -404,6 +407,7 @@ def serve(
                 kv_cache_quant=kv_cache,
                 cpu_offload=cpu_offload > 0,
                 cpu_offload_layers=cpu_offload,
+                cpu_moe=cpu_moe,
                 speculative_draft=speculative_draft,
                 speculative_max=speculative_max,
                 speculative_min=speculative_min,
@@ -749,6 +753,119 @@ def devices():
     detector = DeviceDetector()
     detector.detect()
     detector.list_devices()
+
+
+@app.command()
+def tune(
+    model: str = typer.Argument(..., help="Path to GGUF model file"),
+    force: bool = typer.Option(False, "-f", "--force", help="Force re-tuning even if cache exists"),
+):
+    """Run warmup benchmark to find optimal parameters for a model.
+    
+    Measures actual performance to find the best configuration:
+    - Optimal context size
+    - Best ubatch size
+    - MoE offloading strategy
+    - KV cache type selection
+    
+    Results are cached for 30 days. Second launch skips warmup (2s startup).
+    
+    Examples:
+        moxing tune ./model.gguf
+        moxing tune ./model.gguf --force
+    """
+    from pathlib import Path
+    from moxing.gguf_metadata import extract_model_architecture, should_use_cpu_moe
+    from moxing.warmup_benchmark import WarmupBenchmark, get_hardware_fingerprint, ProfileCache
+    from moxing.device import DeviceDetector
+    from moxing.binaries import get_binary_manager
+    
+    model_path = Path(model)
+    if not model_path.exists():
+        console.print(f"[red]Model not found: {model}[/red]")
+        raise typer.Exit(1)
+    
+    console.print(f"[blue]Analyzing model: {model_path.name}[/blue]")
+    
+    try:
+        arch = extract_model_architecture(model_path)
+        console.print(f"[green]Architecture: {arch.architecture}[/green]")
+        console.print(f"[green]Parameters: {arch.parameter_count_b:.1f}B[/green]")
+        console.print(f"[green]Quantization: {arch.quantization}[/green]")
+        
+        if arch.is_moe:
+            console.print(f"[yellow]MoE detected: {arch.expert_count} experts, {arch.expert_used_count} active[/yellow]")
+            console.print(f"[yellow]Recommendation: Use --cpu-moe for 7-8x speedup on constrained hardware[/yellow]")
+        else:
+            console.print(f"[green]Dense model (no MoE)[/green]")
+    except Exception as e:
+        console.print(f"[yellow]Could not extract model architecture: {e}[/yellow]")
+        arch = None
+    
+    console.print(f"\n[blue]Detecting hardware...[/blue]")
+    detector = DeviceDetector()
+    devices = detector.detect()
+    
+    gpu_devices = [d for d in devices if d.backend.is_gpu()]
+    if not gpu_devices:
+        console.print("[yellow]No GPU detected, using CPU[/yellow]")
+        return
+    
+    best_gpu = max(gpu_devices, key=lambda d: d.free_memory_mb)
+    console.print(f"[green]Best GPU: {best_gpu.name} ({best_gpu.free_memory_gb:.1f}GB free)[/green]")
+    
+    hardware_fp = get_hardware_fingerprint(
+        gpu_backend=best_gpu.backend.value,
+        gpu_name=best_gpu.name,
+        gpu_vram_mb=best_gpu.free_memory_mb,
+    )
+    
+    cache = ProfileCache()
+    model_id = model_path.stem
+    hardware_fp_str = hardware_fp.to_hash()
+    
+    if not force:
+        cached = cache.load(model_id, hardware_fp_str)
+        if cached is not None:
+            console.print(f"\n[green]Using cached profile ({cached.measured_tps:.1f} tok/s)[/green]")
+            console.print(f"[dim]Context: {cached.ctx_size}, ubatch: {cached.ubatch_size}[/dim]")
+            if cached.cpu_moe:
+                console.print(f"[dim]MoE mode: CPU experts, GPU attention[/dim]")
+            console.print(f"\n[yellow]To re-tune, use: moxing tune {model} --force[/yellow]")
+            return
+    
+    console.print(f"\n[blue]Running warmup benchmark...[/blue]")
+    
+    manager = get_binary_manager()
+    if not manager.has_binaries():
+        console.print("[blue]Downloading llama.cpp binaries...[/blue]")
+        manager.download_binaries()
+    
+    binary_path = manager.get_binary_path("llama-server")
+    
+    bench = WarmupBenchmark(
+        model_path=model_path,
+        binary_path=binary_path,
+        hardware_fp=hardware_fp,
+        cache=cache,
+    )
+    
+    profile = bench.run()
+    
+    if profile is not None:
+        console.print(f"\n[green bold]Optimal Configuration:[/green bold]")
+        console.print(f"[green]Context size: {profile.ctx_size}[/green]")
+        console.print(f"[green]ubatch size: {profile.ubatch_size}[/green]")
+        console.print(f"[green]Threads: {profile.n_threads}[/green]")
+        console.print(f"[green]Measured performance: {profile.measured_tps:.1f} tok/s[/green]")
+        
+        if profile.cpu_moe:
+            console.print(f"[yellow]MoE mode: CPU experts, GPU attention[/yellow]")
+            console.print(f"[yellow]Use: moxing serve {model} --cpu-moe[/yellow]")
+        
+        console.print(f"\n[dim]Profile cached for 30 days[/dim]")
+    else:
+        console.print("[yellow]Benchmark failed, using default configuration[/yellow]")
 
 
 @app.command("cache")

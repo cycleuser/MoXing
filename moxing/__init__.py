@@ -61,6 +61,17 @@ from moxing.kv_cache import (
     estimate_kv_cache_size, estimate_kv_cache_size_gb,
     recommend_cache_config, get_llama_cpp_cache_args,
 )
+from moxing.gguf_metadata import (
+    ModelArchitecture, extract_model_architecture, should_use_cpu_moe,
+)
+from moxing.kv_cache_selector import (
+    KVCacheSelection, select_kv_cache_type, calculate_kv_cache_vram_mb,
+    estimate_context_from_vram,
+)
+from moxing.warmup_benchmark import (
+    WarmupBenchmark, ProfileCache, HardwareFingerprint, TunedProfile,
+    get_hardware_fingerprint,
+)
 
 GGUFCompressor = MultiCompressor  # Alias for backward compatibility
 
@@ -128,4 +139,22 @@ __all__ = [
     "estimate_kv_cache_size_gb",
     "recommend_cache_config",
     "get_llama_cpp_cache_args",
+    
+    # GGUF Metadata
+    "ModelArchitecture",
+    "extract_model_architecture",
+    "should_use_cpu_moe",
+    
+    # KV Cache Selector
+    "KVCacheSelection",
+    "select_kv_cache_type",
+    "calculate_kv_cache_vram_mb",
+    "estimate_context_from_vram",
+    
+    # Warmup Benchmark
+    "WarmupBenchmark",
+    "ProfileCache",
+    "HardwareFingerprint",
+    "TunedProfile",
+    "get_hardware_fingerprint",
 ]

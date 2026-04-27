@@ -105,6 +105,9 @@ class OffloadPlan:
     model_size_gb: float
     needs_offload: bool
     suggested_cpu_layers: int
+    is_moe: bool = False
+    use_cpu_moe: bool = False
+    attention_layers_only: bool = False
 
 
 class DeviceDetector:
@@ -682,6 +685,9 @@ class DeviceDetector:
         model_size_gb: float,
         ctx_size: int = 4096,
         total_layers: int = 80,
+        is_moe: bool = False,
+        expert_count: int = 0,
+        expert_used_count: int = 0,
     ) -> OffloadPlan:
         """Calculate GPU/CPU offload plan.
         
@@ -690,6 +696,9 @@ class DeviceDetector:
             model_size_gb: Model size in GB
             ctx_size: Context size
             total_layers: Total number of layers (default 80)
+            is_moe: Whether this is a MoE model
+            expert_count: Total number of experts (for MoE)
+            expert_used_count: Number of active experts per token (for MoE)
         
         Returns:
             OffloadPlan with recommended configuration
@@ -703,15 +712,28 @@ class DeviceDetector:
                 vram_available_gb=0,
                 model_size_gb=model_size_gb,
                 needs_offload=True,
-                suggested_cpu_layers=total_layers
+                suggested_cpu_layers=total_layers,
+                is_moe=is_moe,
+                use_cpu_moe=False,
             )
-        
+
         available_vram_gb = device.free_memory_gb * 0.85
-        
+
+        if is_moe and expert_count > 0:
+            return self._calculate_moe_offload(
+                device=device,
+                model_size_gb=model_size_gb,
+                ctx_size=ctx_size,
+                total_layers=total_layers,
+                available_vram_gb=available_vram_gb,
+                expert_count=expert_count,
+                expert_used_count=expert_used_count,
+            )
+
         kv_cache_gb = ctx_size * 0.000002
-        
+
         vram_required_full = model_size_gb * 1.1 + kv_cache_gb
-        
+
         if available_vram_gb >= vram_required_full:
             return OffloadPlan(
                 can_fit_full=True,
@@ -721,12 +743,14 @@ class DeviceDetector:
                 vram_available_gb=available_vram_gb,
                 model_size_gb=model_size_gb,
                 needs_offload=False,
-                suggested_cpu_layers=0
+                suggested_cpu_layers=0,
+                is_moe=is_moe,
+                use_cpu_moe=False,
             )
-        
+
         layer_size_gb = model_size_gb / total_layers * 1.1
         max_gpu_layers = int(available_vram_gb / layer_size_gb)
-        
+
         if max_gpu_layers >= total_layers:
             return OffloadPlan(
                 can_fit_full=True,
@@ -736,11 +760,13 @@ class DeviceDetector:
                 vram_available_gb=available_vram_gb,
                 model_size_gb=model_size_gb,
                 needs_offload=False,
-                suggested_cpu_layers=0
+                suggested_cpu_layers=0,
+                is_moe=is_moe,
+                use_cpu_moe=False,
             )
-        
+
         cpu_layers_needed = total_layers - max_gpu_layers
-        
+
         return OffloadPlan(
             can_fit_full=False,
             gpu_layers=max_gpu_layers,
@@ -749,7 +775,62 @@ class DeviceDetector:
             vram_available_gb=device.free_memory_gb,
             model_size_gb=model_size_gb,
             needs_offload=True,
-            suggested_cpu_layers=cpu_layers_needed
+            suggested_cpu_layers=cpu_layers_needed,
+            is_moe=is_moe,
+            use_cpu_moe=False,
+        )
+
+    def _calculate_moe_offload(
+        self,
+        device: Device,
+        model_size_gb: float,
+        ctx_size: int,
+        total_layers: int,
+        available_vram_gb: float,
+        expert_count: int,
+        expert_used_count: int,
+    ) -> OffloadPlan:
+        """Calculate offload plan for MoE models with CPU expert offloading."""
+        attention_layer_fraction = 0.3
+        expert_layer_fraction = 0.7
+
+        attention_size_gb = model_size_gb * attention_layer_fraction
+        expert_size_gb = model_size_gb * expert_layer_fraction
+
+        active_expert_ratio = expert_used_count / expert_count if expert_count > 0 else 0.1
+        active_expert_memory_gb = expert_size_gb * active_expert_ratio
+
+        vram_for_attention = attention_size_gb * 1.1
+        kv_cache_gb = ctx_size * 0.000002
+        total_vram_needed = vram_for_attention + kv_cache_gb + active_expert_memory_gb * 0.1
+
+        if available_vram_gb >= total_vram_needed:
+            return OffloadPlan(
+                can_fit_full=True,
+                gpu_layers=-1,
+                cpu_layers=0,
+                vram_required_gb=total_vram_needed,
+                vram_available_gb=available_vram_gb,
+                model_size_gb=model_size_gb,
+                needs_offload=False,
+                suggested_cpu_layers=0,
+                is_moe=True,
+                use_cpu_moe=True,
+                attention_layers_only=True,
+            )
+
+        return OffloadPlan(
+            can_fit_full=False,
+            gpu_layers=-1,
+            cpu_layers=0,
+            vram_required_gb=available_vram_gb,
+            vram_available_gb=available_vram_gb,
+            model_size_gb=model_size_gb,
+            needs_offload=True,
+            suggested_cpu_layers=0,
+            is_moe=True,
+            use_cpu_moe=True,
+            attention_layers_only=True,
         )
     
     def get_best_device(self, model_size_gb: float = 0) -> DeviceConfig:
