@@ -1,0 +1,32 @@
+[
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 0.6271121,
+    "tokens": 20,
+    "tokens_per_sec": 31.892224691566312
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0",
+    "success": true,
+    "time": 0.6304709,
+    "tokens": 20,
+    "tokens_per_sec": 31.722320570227748
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1",
+    "success": true,
+    "time": 0.6449789,
+    "tokens": 20,
+    "tokens_per_sec": 31.00876633328625
+  }
+]

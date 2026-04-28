@@ -1,0 +1,554 @@
+[
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 0.6111626,
+    "tokens": 20,
+    "tokens_per_sec": 32.72451553809085
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0",
+    "success": true,
+    "time": 0.6055744,
+    "tokens": 20,
+    "tokens_per_sec": 33.026495175489586
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1",
+    "success": true,
+    "time": 0.632025,
+    "tokens": 20,
+    "tokens_per_sec": 31.64431786717298
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU",
+    "success": true,
+    "time": 0.6100291,
+    "tokens": 20,
+    "tokens_per_sec": 32.78532122483993
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "moxing-vulkan-gpu0",
+    "description": "MoXing Vulkan GPU0",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "moxing-vulkan-gpu1",
+    "description": "MoXing Vulkan GPU1",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "moxing-vulkan-gpu0-lookahead",
+    "description": "MoXing GPU0 + Lookahead",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "moxing-vulkan-gpu0-kvq4",
+    "description": "MoXing GPU0 + KV Q4",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "moxing-vulkan-gpu0-kvtq3",
+    "description": "MoXing GPU0 + KV Q2",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 0.6884808,
+    "tokens": 20,
+    "tokens_per_sec": 29.049466593694408
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0",
+    "success": true,
+    "time": 0.6835045,
+    "tokens": 20,
+    "tokens_per_sec": 29.260963168494136
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1",
+    "success": true,
+    "time": 0.6810192,
+    "tokens": 20,
+    "tokens_per_sec": 29.367747634721603
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU",
+    "success": true,
+    "time": 0.6777428,
+    "tokens": 20,
+    "tokens_per_sec": 29.509719616350036
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "moxing-vulkan-gpu0",
+    "description": "MoXing Vulkan GPU0",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "moxing-vulkan-gpu1",
+    "description": "MoXing Vulkan GPU1",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "moxing-vulkan-gpu0-lookahead",
+    "description": "MoXing GPU0 + Lookahead",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "moxing-vulkan-gpu0-kvq4",
+    "description": "MoXing GPU0 + KV Q4",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "moxing-vulkan-gpu0-kvtq3",
+    "description": "MoXing GPU0 + KV Q2",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 0.4932879,
+    "tokens": 20,
+    "tokens_per_sec": 40.54427444905906
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0",
+    "success": true,
+    "time": 0.4831941,
+    "tokens": 20,
+    "tokens_per_sec": 41.391233874751364
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1",
+    "success": true,
+    "time": 0.4772737,
+    "tokens": 20,
+    "tokens_per_sec": 41.90467649904028
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU",
+    "success": true,
+    "time": 0.4964644,
+    "tokens": 20,
+    "tokens_per_sec": 40.28486231842606
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "moxing-vulkan-gpu0",
+    "description": "MoXing Vulkan GPU0",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "moxing-vulkan-gpu1",
+    "description": "MoXing Vulkan GPU1",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "moxing-vulkan-gpu0-lookahead",
+    "description": "MoXing GPU0 + Lookahead",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "moxing-vulkan-gpu0-kvq4",
+    "description": "MoXing GPU0 + KV Q4",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "moxing-vulkan-gpu0-kvtq3",
+    "description": "MoXing GPU0 + KV Q2",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 0.9925361,
+    "tokens": 20,
+    "tokens_per_sec": 20.150400574850625
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0",
+    "success": true,
+    "time": 1.0025067,
+    "tokens": 20,
+    "tokens_per_sec": 19.949991356666242
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1",
+    "success": true,
+    "time": 0.9940935,
+    "tokens": 20,
+    "tokens_per_sec": 20.11883188050219
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU",
+    "success": true,
+    "time": 1.0102391,
+    "tokens": 20,
+    "tokens_per_sec": 19.797293531798562
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "moxing-vulkan-gpu0",
+    "description": "MoXing Vulkan GPU0",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "moxing-vulkan-gpu1",
+    "description": "MoXing Vulkan GPU1",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "moxing-vulkan-gpu0-lookahead",
+    "description": "MoXing GPU0 + Lookahead",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "moxing-vulkan-gpu0-kvq4",
+    "description": "MoXing GPU0 + KV Q4",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "moxing-vulkan-gpu0-kvtq3",
+    "description": "MoXing GPU0 + KV Q2",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 1.3081716,
+    "tokens": 20,
+    "tokens_per_sec": 15.288514136830365
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0",
+    "success": true,
+    "time": 1.3085743,
+    "tokens": 20,
+    "tokens_per_sec": 15.28380925714344
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1",
+    "success": true,
+    "time": 1.3126878,
+    "tokens": 20,
+    "tokens_per_sec": 15.235915196286582
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU",
+    "success": true,
+    "time": 1.331249,
+    "tokens": 20,
+    "tokens_per_sec": 15.023485463651054
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "moxing-vulkan-gpu0",
+    "description": "MoXing Vulkan GPU0",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "moxing-vulkan-gpu1",
+    "description": "MoXing Vulkan GPU1",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "moxing-vulkan-gpu0-lookahead",
+    "description": "MoXing GPU0 + Lookahead",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "moxing-vulkan-gpu0-kvq4",
+    "description": "MoXing GPU0 + KV Q4",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "moxing-vulkan-gpu0-kvtq3",
+    "description": "MoXing GPU0 + KV Q2",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 1.3125139,
+    "tokens": 20,
+    "tokens_per_sec": 15.23793386111949
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0",
+    "success": true,
+    "time": 1.2970602,
+    "tokens": 20,
+    "tokens_per_sec": 15.419484770251989
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1",
+    "success": true,
+    "time": 1.2878958,
+    "tokens": 20,
+    "tokens_per_sec": 15.529206633021087
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU",
+    "success": true,
+    "time": 1.3167296,
+    "tokens": 20,
+    "tokens_per_sec": 15.189147414928623
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "moxing-vulkan-gpu0",
+    "description": "MoXing Vulkan GPU0",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "moxing-vulkan-gpu1",
+    "description": "MoXing Vulkan GPU1",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "moxing-vulkan-gpu0-lookahead",
+    "description": "MoXing GPU0 + Lookahead",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "moxing-vulkan-gpu0-kvq4",
+    "description": "MoXing GPU0 + KV Q4",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "moxing-vulkan-gpu0-kvtq3",
+    "description": "MoXing GPU0 + KV Q2",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 2.2997018,
+    "tokens": 20,
+    "tokens_per_sec": 8.696779730311121
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0",
+    "success": true,
+    "time": 2.3148007,
+    "tokens": 20,
+    "tokens_per_sec": 8.640052683585242
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1",
+    "success": true,
+    "time": 2.3191663,
+    "tokens": 20,
+    "tokens_per_sec": 8.623788643358607
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU",
+    "success": true,
+    "time": 2.3075928,
+    "tokens": 20,
+    "tokens_per_sec": 8.667040389448259
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "moxing-vulkan-gpu0",
+    "description": "MoXing Vulkan GPU0",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "moxing-vulkan-gpu1",
+    "description": "MoXing Vulkan GPU1",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "moxing-vulkan-gpu0-lookahead",
+    "description": "MoXing GPU0 + Lookahead",
+    "success": false,
+    "error": "Timeout"
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "moxing-vulkan-gpu0-kvq4",
+    "description": "MoXing GPU0 + KV Q4",
+    "success": false,
+    "error": "Timeout"
+  }
+]
