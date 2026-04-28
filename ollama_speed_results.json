@@ -1,0 +1,106 @@
+[
+  {
+    "model": "functiongemma",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 1.8514834,
+    "tokens": 59,
+    "tokens_per_sec": 31.866340254522402
+  },
+  {
+    "model": "functiongemma",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 2.5051212,
+    "tokens": 80,
+    "tokens_per_sec": 31.93458264614103
+  },
+  {
+    "model": "functiongemma",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 2.2050638,
+    "tokens": 69,
+    "tokens_per_sec": 31.291611607791122
+  },
+  {
+    "model": "functiongemma",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 2.7001256,
+    "tokens": 85,
+    "tokens_per_sec": 31.480017077724092
+  },
+  {
+    "model": "granite4:350m",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 3.0328357,
+    "tokens": 85,
+    "tokens_per_sec": 28.026575920350712
+  },
+  {
+    "model": "granite4:350m",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 2.4463063,
+    "tokens": 69,
+    "tokens_per_sec": 28.205789275038864
+  },
+  {
+    "model": "granite4:350m",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 2.6081053,
+    "tokens": 73,
+    "tokens_per_sec": 27.98966744172484
+  },
+  {
+    "model": "granite4:350m",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 2.7325475,
+    "tokens": 77,
+    "tokens_per_sec": 28.178833121839602
+  },
+  {
+    "model": "gemma3:1b",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 2.6735363,
+    "tokens": 65,
+    "tokens_per_sec": 24.31236860333634
+  },
+  {
+    "model": "gemma3:1b",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 3.9656671,
+    "tokens": 76,
+    "tokens_per_sec": 19.164493156775563
+  },
+  {
+    "model": "gemma3:1b",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": false,
+    "error": "HTTP 500"
+  },
+  {
+    "model": "gemma3:1b",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": false,
+    "error": "HTTP 500"
+  }
+]

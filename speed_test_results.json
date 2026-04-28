@@ -1,0 +1,56 @@
+[
+  {
+    "model": "functiongemma",
+    "config": "baseline-vulkan",
+    "stdout": "",
+    "success": false
+  },
+  {
+    "model": "functiongemma",
+    "config": "baseline-cpu",
+    "stdout": "",
+    "success": false
+  },
+  {
+    "model": "functiongemma",
+    "config": "lookahead-vulkan",
+    "stdout": "",
+    "success": false
+  },
+  {
+    "model": "granite4:350m",
+    "config": "baseline-vulkan",
+    "stdout": "",
+    "success": false
+  },
+  {
+    "model": "granite4:350m",
+    "config": "baseline-cpu",
+    "stdout": "",
+    "success": false
+  },
+  {
+    "model": "granite4:350m",
+    "config": "lookahead-vulkan",
+    "stdout": "",
+    "success": false
+  },
+  {
+    "model": "gemma3:1b",
+    "config": "baseline-vulkan",
+    "stdout": "",
+    "success": false
+  },
+  {
+    "model": "gemma3:1b",
+    "config": "baseline-cpu",
+    "stdout": "",
+    "success": false
+  },
+  {
+    "model": "gemma3:1b",
+    "config": "lookahead-vulkan",
+    "stdout": "",
+    "success": false
+  }
+]

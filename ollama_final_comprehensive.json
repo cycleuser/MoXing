@@ -1,0 +1,440 @@
+[
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 0.6407992,
+    "tokens": 20,
+    "tokens_per_sec": 31.211025232241237
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 0.6597757,
+    "tokens": 20,
+    "tokens_per_sec": 30.31333224306382
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 0.6484736,
+    "tokens": 20,
+    "tokens_per_sec": 30.841656468358927
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 0.6593787,
+    "tokens": 20,
+    "tokens_per_sec": 30.331583352631803
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 0.7288025,
+    "tokens": 20,
+    "tokens_per_sec": 27.442276885713206
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 0.7243223,
+    "tokens": 20,
+    "tokens_per_sec": 27.61201746791449
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 0.7282847,
+    "tokens": 20,
+    "tokens_per_sec": 27.461787951882005
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 0.7342768,
+    "tokens": 20,
+    "tokens_per_sec": 27.23768475321568
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 0.5072314,
+    "tokens": 20,
+    "tokens_per_sec": 39.4297356196797
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 0.4955014,
+    "tokens": 20,
+    "tokens_per_sec": 40.36315538159933
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 0.4948757,
+    "tokens": 20,
+    "tokens_per_sec": 40.41418885590867
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 0.4869924,
+    "tokens": 20,
+    "tokens_per_sec": 41.068402710186035
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 1.020524,
+    "tokens": 20,
+    "tokens_per_sec": 19.59777526055242
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 0.9845283,
+    "tokens": 20,
+    "tokens_per_sec": 20.31429670432023
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 0.9996921,
+    "tokens": 20,
+    "tokens_per_sec": 20.006159896632173
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 1.002467,
+    "tokens": 20,
+    "tokens_per_sec": 19.950781422231355
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 1.2694661,
+    "tokens": 20,
+    "tokens_per_sec": 15.754654653637461
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 1.2720947,
+    "tokens": 20,
+    "tokens_per_sec": 15.722099934855478
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 1.2630685,
+    "tokens": 20,
+    "tokens_per_sec": 15.834453950834813
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 1.2611624,
+    "tokens": 20,
+    "tokens_per_sec": 15.858385882738022
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 1.2727856,
+    "tokens": 20,
+    "tokens_per_sec": 15.71356558402295
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 1.2704032,
+    "tokens": 20,
+    "tokens_per_sec": 15.743033392862989
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 1.2870592,
+    "tokens": 20,
+    "tokens_per_sec": 15.539300756328846
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 1.2872158,
+    "tokens": 20,
+    "tokens_per_sec": 15.537410277282177
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 2.231978,
+    "tokens": 20,
+    "tokens_per_sec": 8.960661798637801
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 2.2193319,
+    "tokens": 20,
+    "tokens_per_sec": 9.011721049924981
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": false,
+    "error": "HTTP 200"
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 2.2335914,
+    "tokens": 20,
+    "tokens_per_sec": 8.954189203987802
+  },
+  {
+    "model": "carstenuhlig/omnicoder-2-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 2.222291,
+    "tokens": 20,
+    "tokens_per_sec": 8.999721458620856
+  },
+  {
+    "model": "carstenuhlig/omnicoder-2-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 2.2278302,
+    "tokens": 20,
+    "tokens_per_sec": 8.977344862279
+  },
+  {
+    "model": "carstenuhlig/omnicoder-2-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 2.2084681,
+    "tokens": 20,
+    "tokens_per_sec": 9.05605111525043
+  },
+  {
+    "model": "carstenuhlig/omnicoder-2-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 2.227239,
+    "tokens": 20,
+    "tokens_per_sec": 8.979727815470186
+  },
+  {
+    "model": "gemma4:e4b",
+    "model_size": "9.6GB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 3.3023433,
+    "tokens": 20,
+    "tokens_per_sec": 6.056305533104326
+  },
+  {
+    "model": "gemma4:e4b",
+    "model_size": "9.6GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 3.3222307,
+    "tokens": 20,
+    "tokens_per_sec": 6.0200515274270385
+  },
+  {
+    "model": "gemma4:e4b",
+    "model_size": "9.6GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 3.3019542,
+    "tokens": 20,
+    "tokens_per_sec": 6.057019203961096
+  },
+  {
+    "model": "gemma4:e4b",
+    "model_size": "9.6GB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 3.3128599,
+    "tokens": 20,
+    "tokens_per_sec": 6.037079926018
+  },
+  {
+    "model": "qwen3.5:4b-bf16",
+    "model_size": "9.3GB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 2.5068734,
+    "tokens": 20,
+    "tokens_per_sec": 7.978065426040263
+  },
+  {
+    "model": "qwen3.5:4b-bf16",
+    "model_size": "9.3GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 2.5239781,
+    "tokens": 20,
+    "tokens_per_sec": 7.923999023604841
+  },
+  {
+    "model": "qwen3.5:4b-bf16",
+    "model_size": "9.3GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 2.5215803,
+    "tokens": 20,
+    "tokens_per_sec": 7.931534046328011
+  },
+  {
+    "model": "qwen3.5:4b-bf16",
+    "model_size": "9.3GB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 2.4920962,
+    "tokens": 20,
+    "tokens_per_sec": 8.02537237527187
+  },
+  {
+    "model": "qwen3.6:35b-a3b",
+    "model_size": "23GB",
+    "config": "ollama-default",
+    "description": "Ollama default",
+    "success": true,
+    "time": 5.1233008,
+    "tokens": 20,
+    "tokens_per_sec": 3.903733311930465
+  },
+  {
+    "model": "qwen3.6:35b-a3b",
+    "model_size": "23GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Ollama Vulkan GPU0 (RX580)",
+    "success": true,
+    "time": 5.1501444,
+    "tokens": 20,
+    "tokens_per_sec": 3.883386260004671
+  },
+  {
+    "model": "qwen3.6:35b-a3b",
+    "model_size": "23GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Ollama Vulkan GPU1 (RX590)",
+    "success": true,
+    "time": 5.1144366,
+    "tokens": 20,
+    "tokens_per_sec": 3.910499154491425
+  },
+  {
+    "model": "qwen3.6:35b-a3b",
+    "model_size": "23GB",
+    "config": "ollama-cpu",
+    "description": "Ollama CPU only",
+    "success": true,
+    "time": 5.1464308,
+    "tokens": 20,
+    "tokens_per_sec": 3.886188462885773
+  }
+]
