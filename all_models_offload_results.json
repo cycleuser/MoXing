@@ -1,0 +1,1241 @@
+[
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Vulkan GPU0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:39:31.779+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 19/19 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:39:31.779+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"271.8 MiB\"",
+        "time=2026-04-28T13:39:31.779+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"170.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:39:31.779+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"111.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:39:31.779+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"104.8 MiB\"",
+        "time=2026-04-28T13:39:31.779+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"1.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:39:31.779+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"658.8 MiB\""
+    },
+    "success": true,
+    "time": 0.5993137,
+    "tokens": 20,
+    "tokens_per_sec": 33.371504772876044
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Vulkan GPU1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:39:48.110+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 19/19 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:39:48.110+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"271.8 MiB\"",
+        "time=2026-04-28T13:39:48.110+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"170.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:39:48.110+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"111.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:39:48.110+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"104.8 MiB\"",
+        "time=2026-04-28T13:39:48.110+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"1.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:39:48.110+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"658.8 MiB\""
+    },
+    "success": true,
+    "time": 0.6080849,
+    "tokens": 20,
+    "tokens_per_sec": 32.89014412296704
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-num-gpu-0",
+    "description": "NUM_GPU=0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:40:04.497+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 19/19 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:40:04.497+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"271.8 MiB\"",
+        "time=2026-04-28T13:40:04.497+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"170.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:40:04.497+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"111.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:40:04.497+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"104.8 MiB\"",
+        "time=2026-04-28T13:40:04.497+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"1.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:40:04.497+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"658.8 MiB\""
+    },
+    "success": true,
+    "time": 0.6192731,
+    "tokens": 20,
+    "tokens_per_sec": 32.2959288882401
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-gpu--1",
+    "description": "GPU=-1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:40:21.094+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 19/19 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:40:21.095+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"271.8 MiB\"",
+        "time=2026-04-28T13:40:21.095+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"170.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:40:21.095+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"111.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:40:21.095+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"104.8 MiB\"",
+        "time=2026-04-28T13:40:21.095+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"1.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:40:21.095+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"658.8 MiB\""
+    },
+    "success": true,
+    "time": 0.5917867,
+    "tokens": 20,
+    "tokens_per_sec": 33.79596060540056
+  },
+  {
+    "model": "functiongemma",
+    "model_size": "300MB",
+    "config": "ollama-no-vulkan",
+    "description": "No Vulkan (CPU)",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:40:30.612+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 0/19 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:40:30.612+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"441.8 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:40:30.612+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"27.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:40:30.612+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"23.5 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:40:30.612+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"492.3 MiB\""
+    },
+    "success": true,
+    "time": 0.4813668,
+    "tokens": 20,
+    "tokens_per_sec": 41.54835771806448
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Vulkan GPU0",
+    "offload_info": {
+      "weights": [
+        "time=2026-04-28T13:40:42.941+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"672.2 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:40:42.941+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"896.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:40:42.941+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"597.3 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:40:42.941+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"2.1 GiB\"",
+      "offload": "load_tensors: offloaded 29/29 layers to GPU"
+    },
+    "success": true,
+    "time": 0.6714733,
+    "tokens": 20,
+    "tokens_per_sec": 29.78524983793101
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Vulkan GPU1",
+    "offload_info": {
+      "weights": [
+        "time=2026-04-28T13:40:57.984+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"672.2 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:40:57.984+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"896.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:40:57.984+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"597.3 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:40:57.984+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"2.1 GiB\"",
+      "offload": "load_tensors: offloaded 29/29 layers to GPU"
+    },
+    "success": true,
+    "time": 0.662857,
+    "tokens": 20,
+    "tokens_per_sec": 30.172420295780235
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-num-gpu-0",
+    "description": "NUM_GPU=0",
+    "offload_info": {
+      "weights": [
+        "time=2026-04-28T13:41:13.695+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"672.2 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:41:13.695+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"896.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:41:13.695+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"597.3 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:41:13.695+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"2.1 GiB\"",
+      "offload": "load_tensors: offloaded 29/29 layers to GPU"
+    },
+    "success": true,
+    "time": 0.6727355,
+    "tokens": 20,
+    "tokens_per_sec": 29.729366147616705
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-gpu--1",
+    "description": "GPU=-1",
+    "offload_info": {
+      "weights": [
+        "time=2026-04-28T13:41:29.547+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"672.2 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:41:29.547+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"896.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:41:29.547+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"597.3 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:41:29.547+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"2.1 GiB\"",
+      "offload": "load_tensors: offloaded 29/29 layers to GPU"
+    },
+    "success": true,
+    "time": 0.6748004,
+    "tokens": 20,
+    "tokens_per_sec": 29.638393812451802
+  },
+  {
+    "model": "granite4:350m",
+    "model_size": "708MB",
+    "config": "ollama-no-vulkan",
+    "description": "No Vulkan (CPU)",
+    "offload_info": {
+      "weights": [
+        "time=2026-04-28T13:41:40.083+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"672.2 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:41:40.083+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"112.0 MiB\"",
+      "total_memory": "time=2026-04-28T13:41:40.083+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"784.2 MiB\""
+    },
+    "success": true,
+    "time": 1.0399311,
+    "tokens": 20,
+    "tokens_per_sec": 19.23204335364141
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Vulkan GPU0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:41:56.259+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 17/17 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:41:56.259+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"694.8 MiB\"",
+        "time=2026-04-28T13:41:56.259+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"105.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:41:56.259+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"387.9 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:41:56.259+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"120.0 MiB\"",
+        "time=2026-04-28T13:41:56.259+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"4.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:41:56.259+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.3 GiB\""
+    },
+    "success": true,
+    "time": 0.4581101,
+    "tokens": 20,
+    "tokens_per_sec": 43.65762728217518
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Vulkan GPU1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:42:10.789+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 17/17 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:42:10.790+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"694.8 MiB\"",
+        "time=2026-04-28T13:42:10.790+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"105.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:42:10.790+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"387.9 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:42:10.790+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"120.0 MiB\"",
+        "time=2026-04-28T13:42:10.790+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"4.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:42:10.790+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.3 GiB\""
+    },
+    "success": true,
+    "time": 0.463932,
+    "tokens": 20,
+    "tokens_per_sec": 43.109766086409216
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-num-gpu-0",
+    "description": "NUM_GPU=0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:42:25.231+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 17/17 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:42:25.231+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"694.8 MiB\"",
+        "time=2026-04-28T13:42:25.232+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"105.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:42:25.232+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"387.9 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:42:25.232+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"120.0 MiB\"",
+        "time=2026-04-28T13:42:25.232+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"4.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:42:25.232+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.3 GiB\""
+    },
+    "success": true,
+    "time": 0.4505876,
+    "tokens": 20,
+    "tokens_per_sec": 44.386485557969195
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-gpu--1",
+    "description": "GPU=-1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:42:39.806+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 17/17 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:42:39.806+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"694.8 MiB\"",
+        "time=2026-04-28T13:42:39.806+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"105.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:42:39.806+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"387.9 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:42:39.806+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"120.0 MiB\"",
+        "time=2026-04-28T13:42:39.806+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"4.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:42:39.806+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.3 GiB\""
+    },
+    "success": true,
+    "time": 0.4610301,
+    "tokens": 20,
+    "tokens_per_sec": 43.38111546296001
+  },
+  {
+    "model": "lfm2.5-thinking",
+    "model_size": "731MB",
+    "config": "ollama-no-vulkan",
+    "description": "No Vulkan (CPU)",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:42:49.403+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 0/17 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:42:49.403+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"799.8 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:42:49.403+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"51.9 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:42:49.403+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"64.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:42:49.403+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"915.7 MiB\""
+    },
+    "success": true,
+    "time": 1.061262,
+    "tokens": 20,
+    "tokens_per_sec": 18.845487730645214
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Vulkan GPU0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:43:05.846+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 27/27 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:43:05.846+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"762.5 MiB\"",
+        "time=2026-04-28T13:43:05.847+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"306.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:43:05.847+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"150.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:43:05.847+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"114.0 MiB\"",
+        "time=2026-04-28T13:43:05.847+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"2.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:43:05.847+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.3 GiB\""
+    },
+    "success": true,
+    "time": 0.9810372,
+    "tokens": 20,
+    "tokens_per_sec": 20.386586767555805
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Vulkan GPU1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:43:24.201+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 27/27 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:43:24.201+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"762.5 MiB\"",
+        "time=2026-04-28T13:43:24.201+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"306.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:43:24.201+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"150.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:43:24.201+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"114.0 MiB\"",
+        "time=2026-04-28T13:43:24.201+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"2.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:43:24.202+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.3 GiB\""
+    },
+    "success": true,
+    "time": 0.955213,
+    "tokens": 20,
+    "tokens_per_sec": 20.937738493927533
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-num-gpu-0",
+    "description": "NUM_GPU=0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:43:42.348+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 27/27 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:43:42.348+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"762.5 MiB\"",
+        "time=2026-04-28T13:43:42.348+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"306.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:43:42.348+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"150.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:43:42.348+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"114.0 MiB\"",
+        "time=2026-04-28T13:43:42.348+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"2.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:43:42.348+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.3 GiB\""
+    },
+    "success": true,
+    "time": 0.9751001,
+    "tokens": 20,
+    "tokens_per_sec": 20.51071474610658
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-gpu--1",
+    "description": "GPU=-1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:44:00.855+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 27/27 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:44:00.855+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"762.5 MiB\"",
+        "time=2026-04-28T13:44:00.855+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"306.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:44:00.855+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"150.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:44:00.855+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"114.0 MiB\"",
+        "time=2026-04-28T13:44:00.855+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"2.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:44:00.856+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.3 GiB\""
+    },
+    "success": true,
+    "time": 0.9778435,
+    "tokens": 20,
+    "tokens_per_sec": 20.45317067608467
+  },
+  {
+    "model": "gemma3:1b",
+    "model_size": "815MB",
+    "config": "ollama-no-vulkan",
+    "description": "No Vulkan (CPU)",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:44:12.667+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 0/27 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:44:12.667+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"1.0 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:44:12.667+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"38.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:44:12.667+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"52.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:44:12.667+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.1 GiB\""
+    },
+    "success": true,
+    "time": 1.2016916,
+    "tokens": 20,
+    "tokens_per_sec": 16.643205294935907
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Vulkan GPU0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:44:28.851+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 2/27 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:44:28.851+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"37.2 MiB\"",
+        "time=2026-04-28T13:44:28.851+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"1.0 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:44:28.851+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"28.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:44:28.851+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"60.2 MiB\"",
+        "time=2026-04-28T13:44:28.852+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"2.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:44:28.852+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.1 GiB\""
+    },
+    "success": true,
+    "time": 1.2721783,
+    "tokens": 20,
+    "tokens_per_sec": 15.721066771851085
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Vulkan GPU1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:44:45.019+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 2/27 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:44:45.019+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"37.2 MiB\"",
+        "time=2026-04-28T13:44:45.019+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"1.0 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:44:45.019+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"28.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:44:45.019+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"60.2 MiB\"",
+        "time=2026-04-28T13:44:45.019+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"2.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:44:45.019+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.1 GiB\""
+    },
+    "success": true,
+    "time": 1.2795068,
+    "tokens": 20,
+    "tokens_per_sec": 15.6310228284836
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-num-gpu-0",
+    "description": "NUM_GPU=0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:45:01.346+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 2/27 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:45:01.346+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"37.2 MiB\"",
+        "time=2026-04-28T13:45:01.346+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"1.0 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:45:01.346+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"28.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:45:01.346+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"60.2 MiB\"",
+        "time=2026-04-28T13:45:01.346+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"2.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:45:01.346+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.1 GiB\""
+    },
+    "success": true,
+    "time": 1.2803472,
+    "tokens": 20,
+    "tokens_per_sec": 15.620762868072035
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-gpu--1",
+    "description": "GPU=-1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:45:17.869+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 2/27 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:45:17.870+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"37.2 MiB\"",
+        "time=2026-04-28T13:45:17.870+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"1.0 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:45:17.870+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"28.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:45:17.870+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"60.2 MiB\"",
+        "time=2026-04-28T13:45:17.870+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"2.2 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:45:17.870+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.1 GiB\""
+    },
+    "success": true,
+    "time": 1.2779954,
+    "tokens": 20,
+    "tokens_per_sec": 15.649508597605282
+  },
+  {
+    "model": "fusion-model",
+    "model_size": "815MB",
+    "config": "ollama-no-vulkan",
+    "description": "No Vulkan (CPU)",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:45:28.073+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 0/27 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:45:28.073+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"1.0 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:45:28.073+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"30.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:45:28.073+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"50.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:45:28.073+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"1.1 GiB\""
+    },
+    "success": true,
+    "time": 1.1878906,
+    "tokens": 20,
+    "tokens_per_sec": 16.83656727311421
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Vulkan GPU0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:45:48.238+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 25/25 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:45:48.238+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"1.6 GiB\"",
+        "time=2026-04-28T13:45:48.238+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"489.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:45:48.239+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"865.6 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:45:48.239+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"546.8 MiB\"",
+        "time=2026-04-28T13:45:48.239+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"7.9 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:45:48.239+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"3.5 GiB\""
+    },
+    "success": true,
+    "time": 1.2696927,
+    "tokens": 20,
+    "tokens_per_sec": 15.75184294593487
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Vulkan GPU1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:46:13.229+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 25/25 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:46:13.230+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"1.6 GiB\"",
+        "time=2026-04-28T13:46:13.230+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"489.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:46:13.230+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"865.6 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:46:13.230+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"546.8 MiB\"",
+        "time=2026-04-28T13:46:13.230+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"7.9 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:46:13.230+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"3.5 GiB\""
+    },
+    "success": true,
+    "time": 1.2831095,
+    "tokens": 20,
+    "tokens_per_sec": 15.587134223540549
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-num-gpu-0",
+    "description": "NUM_GPU=0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:46:37.766+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 25/25 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:46:37.766+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"1.6 GiB\"",
+        "time=2026-04-28T13:46:37.766+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"489.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:46:37.767+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"865.6 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:46:37.767+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"546.8 MiB\"",
+        "time=2026-04-28T13:46:37.767+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"7.9 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:46:37.767+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"3.5 GiB\""
+    },
+    "success": true,
+    "time": 1.2815075,
+    "tokens": 20,
+    "tokens_per_sec": 15.606619547681149
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-gpu--1",
+    "description": "GPU=-1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:47:02.097+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 25/25 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:47:02.097+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"1.6 GiB\"",
+        "time=2026-04-28T13:47:02.097+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"489.0 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:47:02.097+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"865.6 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:47:02.097+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"546.8 MiB\"",
+        "time=2026-04-28T13:47:02.097+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"7.9 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:47:02.097+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"3.5 GiB\""
+    },
+    "success": true,
+    "time": 1.2810635,
+    "tokens": 20,
+    "tokens_per_sec": 15.612028599675194
+  },
+  {
+    "model": "qwen3.5:0.8b-bf16",
+    "model_size": "1.8GB",
+    "config": "ollama-no-vulkan",
+    "description": "No Vulkan (CPU)",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:47:18.057+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 0/25 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:47:18.057+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"2.1 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:47:18.057+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"529.6 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:47:18.057+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"216.9 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:47:18.057+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"2.8 GiB\""
+    },
+    "success": true,
+    "time": 2.9444826,
+    "tokens": 20,
+    "tokens_per_sec": 6.792364811393349
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Vulkan GPU0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:47:36.908+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:47:36.908+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"4.8 GiB\"",
+        "time=2026-04-28T13:47:36.908+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"545.6 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:47:36.908+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:47:36.908+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"170.0 MiB\"",
+        "time=2026-04-28T13:47:36.908+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"8.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:47:36.908+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"7.7 GiB\""
+    },
+    "success": true,
+    "time": 2.2378709,
+    "tokens": 20,
+    "tokens_per_sec": 8.937066030037748
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Vulkan GPU1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:48:10.004+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:48:10.005+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"4.8 GiB\"",
+        "time=2026-04-28T13:48:10.005+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"545.6 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:48:10.005+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:48:10.005+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"170.0 MiB\"",
+        "time=2026-04-28T13:48:10.005+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"8.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:48:10.005+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"7.7 GiB\""
+    },
+    "success": true,
+    "time": 2.2414812,
+    "tokens": 20,
+    "tokens_per_sec": 8.922671312166258
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-num-gpu-0",
+    "description": "NUM_GPU=0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:48:45.300+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:48:45.300+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"4.8 GiB\"",
+        "time=2026-04-28T13:48:45.300+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"545.6 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:48:45.300+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:48:45.300+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"170.0 MiB\"",
+        "time=2026-04-28T13:48:45.300+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"8.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:48:45.300+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"7.7 GiB\""
+    },
+    "success": true,
+    "time": 2.2339557,
+    "tokens": 20,
+    "tokens_per_sec": 8.952729008905592
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-gpu--1",
+    "description": "GPU=-1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:49:20.210+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:49:20.210+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"4.8 GiB\"",
+        "time=2026-04-28T13:49:20.210+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"545.6 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:49:20.210+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:49:20.210+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"170.0 MiB\"",
+        "time=2026-04-28T13:49:20.210+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"8.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:49:20.210+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"7.7 GiB\""
+    },
+    "success": true,
+    "time": 2.2484249,
+    "tokens": 20,
+    "tokens_per_sec": 8.895115865333105
+  },
+  {
+    "model": "carstenuhlig/omnicoder-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-no-vulkan",
+    "description": "No Vulkan (CPU)",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:49:47.185+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 0/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:49:47.185+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"5.3 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:49:47.185+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:49:47.185+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"140.1 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:49:47.185+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"7.7 GiB\""
+    },
+    "success": true,
+    "time": 9.3950989,
+    "tokens": 20,
+    "tokens_per_sec": 2.1287695012981716
+  },
+  {
+    "model": "carstenuhlig/omnicoder-2-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Vulkan GPU0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:50:17.226+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:50:17.226+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"4.8 GiB\"",
+        "time=2026-04-28T13:50:17.226+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"545.6 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:50:17.226+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:50:17.226+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"170.0 MiB\"",
+        "time=2026-04-28T13:50:17.227+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"8.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:50:17.227+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"7.7 GiB\""
+    },
+    "success": true,
+    "time": 2.2360547,
+    "tokens": 20,
+    "tokens_per_sec": 8.94432502031368
+  },
+  {
+    "model": "carstenuhlig/omnicoder-2-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Vulkan GPU1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:50:50.648+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:50:50.648+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"4.8 GiB\"",
+        "time=2026-04-28T13:50:50.648+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"545.6 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:50:50.648+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:50:50.648+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"170.0 MiB\"",
+        "time=2026-04-28T13:50:50.648+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"8.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:50:50.648+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"7.7 GiB\""
+    },
+    "success": true,
+    "time": 2.241941,
+    "tokens": 20,
+    "tokens_per_sec": 8.920841360232048
+  },
+  {
+    "model": "carstenuhlig/omnicoder-2-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-num-gpu-0",
+    "description": "NUM_GPU=0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:51:24.492+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:51:24.493+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"4.8 GiB\"",
+        "time=2026-04-28T13:51:24.493+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"545.6 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:51:24.493+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:51:24.493+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"170.0 MiB\"",
+        "time=2026-04-28T13:51:24.493+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"8.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:51:24.493+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"7.7 GiB\""
+    },
+    "success": true,
+    "time": 2.2379883,
+    "tokens": 20,
+    "tokens_per_sec": 8.936597210986314
+  },
+  {
+    "model": "carstenuhlig/omnicoder-2-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-gpu--1",
+    "description": "GPU=-1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:51:57.462+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:51:57.462+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"4.8 GiB\"",
+        "time=2026-04-28T13:51:57.462+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"545.6 MiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:51:57.462+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:51:57.462+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"170.0 MiB\"",
+        "time=2026-04-28T13:51:57.462+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"8.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:51:57.462+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"7.7 GiB\""
+    },
+    "success": true,
+    "time": 2.2453594,
+    "tokens": 20,
+    "tokens_per_sec": 8.907260013697584
+  },
+  {
+    "model": "carstenuhlig/omnicoder-2-9b",
+    "model_size": "5.7GB",
+    "config": "ollama-no-vulkan",
+    "description": "No Vulkan (CPU)",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:52:24.590+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 0/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:52:24.590+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"5.3 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:52:24.590+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:52:24.590+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"140.1 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:52:24.590+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"7.7 GiB\""
+    },
+    "success": true,
+    "time": 9.3301182,
+    "tokens": 20,
+    "tokens_per_sec": 2.1435955655953
+  },
+  {
+    "model": "gemma4:e4b",
+    "model_size": "9.6GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Vulkan GPU0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:52:54.611+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 42/43 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:52:54.612+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"2.8 GiB\"",
+        "time=2026-04-28T13:52:54.612+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"6.6 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:52:54.612+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"692.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:52:54.612+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"190.8 MiB\"",
+        "time=2026-04-28T13:52:54.612+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"21.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:52:54.612+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"10.3 GiB\""
+    },
+    "success": true,
+    "time": 3.1071509,
+    "tokens": 20,
+    "tokens_per_sec": 6.4367649475923425
+  },
+  {
+    "model": "gemma4:e4b",
+    "model_size": "9.6GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Vulkan GPU1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:53:27.366+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 42/43 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:53:27.366+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"2.8 GiB\"",
+        "time=2026-04-28T13:53:27.366+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"6.6 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:53:27.366+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"692.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:53:27.366+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"190.8 MiB\"",
+        "time=2026-04-28T13:53:27.366+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"21.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:53:27.366+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"10.3 GiB\""
+    },
+    "success": true,
+    "time": 3.119249,
+    "tokens": 20,
+    "tokens_per_sec": 6.411799763340471
+  },
+  {
+    "model": "gemma4:e4b",
+    "model_size": "9.6GB",
+    "config": "ollama-num-gpu-0",
+    "description": "NUM_GPU=0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:54:00.595+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 42/43 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:54:00.595+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"2.8 GiB\"",
+        "time=2026-04-28T13:54:00.596+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"6.6 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:54:00.596+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"692.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:54:00.596+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"190.8 MiB\"",
+        "time=2026-04-28T13:54:00.596+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"21.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:54:00.596+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"10.3 GiB\""
+    },
+    "success": true,
+    "time": 3.1298609,
+    "tokens": 20,
+    "tokens_per_sec": 6.390060337825236
+  },
+  {
+    "model": "gemma4:e4b",
+    "model_size": "9.6GB",
+    "config": "ollama-gpu--1",
+    "description": "GPU=-1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:54:33.378+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 42/43 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:54:33.378+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"2.8 GiB\"",
+        "time=2026-04-28T13:54:33.378+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"6.6 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:54:33.378+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"692.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:54:33.378+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"190.8 MiB\"",
+        "time=2026-04-28T13:54:33.378+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"21.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:54:33.378+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"10.3 GiB\""
+    },
+    "success": true,
+    "time": 3.1041546,
+    "tokens": 20,
+    "tokens_per_sec": 6.4429780655899025
+  },
+  {
+    "model": "gemma4:e4b",
+    "model_size": "9.6GB",
+    "config": "ollama-no-vulkan",
+    "description": "No Vulkan (CPU)",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:54:59.060+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 0/43 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:54:59.060+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"9.4 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:54:59.061+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"224.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:54:59.061+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"125.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:54:59.061+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"9.8 GiB\""
+    },
+    "success": true,
+    "time": 4.2741422,
+    "tokens": 20,
+    "tokens_per_sec": 4.679301498204715
+  },
+  {
+    "model": "qwen3.5:4b-bf16",
+    "model_size": "9.3GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Vulkan GPU0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:55:28.217+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:55:28.217+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"8.7 GiB\"",
+        "time=2026-04-28T13:55:28.217+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"1.2 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:55:28.217+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:55:28.217+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"663.1 MiB\"",
+        "time=2026-04-28T13:55:28.217+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"19.8 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:55:28.217+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"12.8 GiB\""
+    },
+    "success": true,
+    "time": 2.5304219,
+    "tokens": 20,
+    "tokens_per_sec": 7.903820307593765
+  },
+  {
+    "model": "qwen3.5:4b-bf16",
+    "model_size": "9.3GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Vulkan GPU1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:56:17.615+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:56:17.616+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"8.7 GiB\"",
+        "time=2026-04-28T13:56:17.616+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"1.2 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:56:17.616+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:56:17.616+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"663.1 MiB\"",
+        "time=2026-04-28T13:56:17.616+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"19.8 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:56:17.616+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"12.8 GiB\""
+    },
+    "success": true,
+    "time": 2.530897,
+    "tokens": 20,
+    "tokens_per_sec": 7.902336602398281
+  },
+  {
+    "model": "qwen3.5:4b-bf16",
+    "model_size": "9.3GB",
+    "config": "ollama-num-gpu-0",
+    "description": "NUM_GPU=0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:57:05.388+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:57:05.388+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"8.7 GiB\"",
+        "time=2026-04-28T13:57:05.389+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"1.2 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:57:05.389+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:57:05.389+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"663.1 MiB\"",
+        "time=2026-04-28T13:57:05.389+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"19.8 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:57:05.389+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"12.8 GiB\""
+    },
+    "success": true,
+    "time": 2.5359934,
+    "tokens": 20,
+    "tokens_per_sec": 7.8864558559182365
+  },
+  {
+    "model": "qwen3.5:4b-bf16",
+    "model_size": "9.3GB",
+    "config": "ollama-gpu--1",
+    "description": "GPU=-1",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:57:53.205+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 33/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:57:53.206+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"8.7 GiB\"",
+        "time=2026-04-28T13:57:53.206+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"1.2 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:57:53.206+08:00 level=INFO source=device.go:251 msg=\"kv cache\" device=Vulkan0 size=\"2.2 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:57:53.206+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"663.1 MiB\"",
+        "time=2026-04-28T13:57:53.206+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"19.8 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:57:53.206+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"12.8 GiB\""
+    },
+    "success": true,
+    "time": 2.5352449,
+    "tokens": 20,
+    "tokens_per_sec": 7.888784235400691
+  },
+  {
+    "model": "qwen3.5:4b-bf16",
+    "model_size": "9.3GB",
+    "config": "ollama-no-vulkan",
+    "description": "No Vulkan (CPU)",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:58:33.344+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 0/33 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:58:33.344+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"9.9 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:58:33.344+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"1.4 GiB\"",
+      "compute": [
+        "time=2026-04-28T13:58:33.344+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"393.9 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:58:33.344+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"11.6 GiB\""
+    },
+    "success": true,
+    "time": 13.7974054,
+    "tokens": 20,
+    "tokens_per_sec": 1.4495478983316674
+  },
+  {
+    "model": "qwen3.6:35b-a3b",
+    "model_size": "23GB",
+    "config": "ollama-vulkan-gpu0",
+    "description": "Vulkan GPU0",
+    "offload_info": {
+      "offload": "time=2026-04-28T13:59:33.422+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 36/41 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T13:59:33.422+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"12.2 GiB\"",
+        "time=2026-04-28T13:59:33.422+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan1 size=\"6.1 GiB\"",
+        "time=2026-04-28T13:59:33.422+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"4.0 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T13:59:33.423+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"221.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T13:59:33.423+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"618.2 MiB\"",
+        "time=2026-04-28T13:59:33.423+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan1 size=\"500.7 MiB\"",
+        "time=2026-04-28T13:59:33.423+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"629.1 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T13:59:33.423+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"26.1 GiB\""
+    },
+    "success": true,
+    "time": 4.76154,
+    "tokens": 20,
+    "tokens_per_sec": 4.20032174464564
+  },
+  {
+    "model": "qwen3.6:35b-a3b",
+    "model_size": "23GB",
+    "config": "ollama-vulkan-gpu1",
+    "description": "Vulkan GPU1",
+    "offload_info": {
+      "offload": "time=2026-04-28T14:00:54.256+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 37/41 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T14:00:54.256+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"12.7 GiB\"",
+        "time=2026-04-28T14:00:54.256+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan1 size=\"6.1 GiB\"",
+        "time=2026-04-28T14:00:54.256+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"3.5 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T14:00:54.256+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"157.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T14:00:54.256+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"570.1 MiB\"",
+        "time=2026-04-28T14:00:54.256+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan1 size=\"500.7 MiB\"",
+        "time=2026-04-28T14:00:54.256+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"629.1 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T14:00:54.256+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"26.1 GiB\""
+    },
+    "success": true,
+    "time": 4.6857333,
+    "tokens": 20,
+    "tokens_per_sec": 4.268275362577721
+  },
+  {
+    "model": "qwen3.6:35b-a3b",
+    "model_size": "23GB",
+    "config": "ollama-num-gpu-0",
+    "description": "NUM_GPU=0",
+    "offload_info": {
+      "offload": "time=2026-04-28T14:02:14.541+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 37/41 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T14:02:14.541+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"12.7 GiB\"",
+        "time=2026-04-28T14:02:14.541+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan1 size=\"6.1 GiB\"",
+        "time=2026-04-28T14:02:14.541+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"3.5 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T14:02:14.542+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"157.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T14:02:14.542+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"570.1 MiB\"",
+        "time=2026-04-28T14:02:14.542+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan1 size=\"500.7 MiB\"",
+        "time=2026-04-28T14:02:14.542+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"629.1 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T14:02:14.542+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"26.1 GiB\""
+    },
+    "success": true,
+    "time": 4.7226356,
+    "tokens": 20,
+    "tokens_per_sec": 4.23492339743511
+  },
+  {
+    "model": "qwen3.6:35b-a3b",
+    "model_size": "23GB",
+    "config": "ollama-gpu--1",
+    "description": "GPU=-1",
+    "offload_info": {
+      "offload": "time=2026-04-28T14:03:35.317+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 37/41 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T14:03:35.317+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan0 size=\"12.7 GiB\"",
+        "time=2026-04-28T14:03:35.317+08:00 level=INFO source=device.go:240 msg=\"model weights\" device=Vulkan1 size=\"6.1 GiB\"",
+        "time=2026-04-28T14:03:35.317+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"3.5 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T14:03:35.317+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"157.0 MiB\"",
+      "compute": [
+        "time=2026-04-28T14:03:35.317+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan0 size=\"570.1 MiB\"",
+        "time=2026-04-28T14:03:35.317+08:00 level=INFO source=device.go:262 msg=\"compute graph\" device=Vulkan1 size=\"500.7 MiB\"",
+        "time=2026-04-28T14:03:35.317+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"629.1 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T14:03:35.317+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"26.1 GiB\""
+    },
+    "success": true,
+    "time": 4.6849383,
+    "tokens": 20,
+    "tokens_per_sec": 4.268999657903713
+  },
+  {
+    "model": "qwen3.6:35b-a3b",
+    "model_size": "23GB",
+    "config": "ollama-no-vulkan",
+    "description": "No Vulkan (CPU)",
+    "offload_info": {
+      "offload": "time=2026-04-28T14:04:42.569+08:00 level=INFO source=ggml.go:494 msg=\"offloaded 0/41 layers to GPU\"",
+      "weights": [
+        "time=2026-04-28T14:04:42.569+08:00 level=INFO source=device.go:245 msg=\"model weights\" device=CPU size=\"22.3 GiB\""
+      ],
+      "kv_cache": "time=2026-04-28T14:04:42.569+08:00 level=INFO source=device.go:256 msg=\"kv cache\" device=CPU size=\"1.6 GiB\"",
+      "compute": [
+        "time=2026-04-28T14:04:42.569+08:00 level=INFO source=device.go:267 msg=\"compute graph\" device=CPU size=\"386.0 MiB\""
+      ],
+      "total_memory": "time=2026-04-28T14:04:42.569+08:00 level=INFO source=device.go:272 msg=\"total memory\" size=\"24.3 GiB\""
+    },
+    "success": true,
+    "time": 5.4341649,
+    "tokens": 20,
+    "tokens_per_sec": 3.6804183104564974
+  }
+]
