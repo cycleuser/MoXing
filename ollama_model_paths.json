@@ -1,0 +1,56 @@
+[
+  {
+    "name": "functiongemma:latest",
+    "path": "C:\\Users\\frede\\.ollama\\models\\blobs\\sha256-415f8f959d807bd4d4da891f01225d7b330416947fb011a8473080ae4fd07885",
+    "size_gb": 0.28,
+    "size_mb": 286.9
+  },
+  {
+    "name": "fusion-model:latest",
+    "path": "C:\\Users\\frede\\.ollama\\models\\blobs\\sha256-7cd4618c1faf8b7233c6c906dac1694b6a47684b37b8895d470ac688520b9c01",
+    "size_gb": 0.76,
+    "size_mb": 777.5
+  },
+  {
+    "name": "gemma3:1b",
+    "path": "C:\\Users\\frede\\.ollama\\models\\blobs\\sha256-7cd4618c1faf8b7233c6c906dac1694b6a47684b37b8895d470ac688520b9c01",
+    "size_gb": 0.76,
+    "size_mb": 777.5
+  },
+  {
+    "name": "gemma4:e4b",
+    "path": "C:\\Users\\frede\\.ollama\\models\\blobs\\sha256-4c27e0f5b5adf02ac956c7322bd2ee7636fe3f45a8512c9aba5385242cb6e09a",
+    "size_gb": 8.95,
+    "size_mb": 9163.2
+  },
+  {
+    "name": "granite4:350m",
+    "path": "C:\\Users\\frede\\.ollama\\models\\blobs\\sha256-431e956cac90a7e4d36a9b37bb086c413491c598bb51f90ada8e0c75d0219645",
+    "size_gb": 0.66,
+    "size_mb": 675.6
+  },
+  {
+    "name": "lfm2.5-thinking:latest",
+    "path": "C:\\Users\\frede\\.ollama\\models\\blobs\\sha256-a7b19185f31650af480c3fa28dd240c75862182e0f30b118dbfadb192e4beb0a",
+    "size_gb": 0.68,
+    "size_mb": 697.3
+  },
+  {
+    "name": "qwen3.5:0.8b-bf16",
+    "path": "C:\\Users\\frede\\.ollama\\models\\blobs\\sha256-44861d5c771ce52e291035630699bdd536f67220a94f498e935554922961f29f",
+    "size_gb": 1.64,
+    "size_mb": 1678.6
+  },
+  {
+    "name": "qwen3.5:4b-bf16",
+    "path": "C:\\Users\\frede\\.ollama\\models\\blobs\\sha256-fab772869c65846d8699fabe9f4342f19323ea265ca3b217497be5424b868f8a",
+    "size_gb": 8.69,
+    "size_mb": 8901.9
+  },
+  {
+    "name": "qwen3.6:35b-a3b",
+    "path": "C:\\Users\\frede\\.ollama\\models\\blobs\\sha256-f5ee307a2982106a6eb82b62b2c00b575c9072145a759ae4660378acda8dcf2d",
+    "size_gb": 22.29,
+    "size_mb": 22829.4
+  }
+]
