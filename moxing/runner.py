@@ -1,5 +1,10 @@
 """
-Unified runner for automatic model loading and optimal configuration
+Unified runner for automatic model loading and optimal configuration.
+
+Supports:
+- llama_cpp: llama.cpp server (GGUF models)
+- ollama: Ollama runner (Ollama model format)
+- vllm: vLLM engine (HuggingFace/GGUF models)
 """
 
 import os
@@ -7,7 +12,6 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Union
-from dataclasses import dataclass, field
 
 from rich.console import Console
 from rich.panel import Panel
@@ -20,49 +24,16 @@ from moxing.device import (
 from moxing.models import (
     ModelDownloader, ModelInfo, ModelRegistry, download_model
 )
-from moxing.server import LlamaServer
+from moxing.runners.base import (
+    BaseRunner, RunnerConfig, create_runner, detect_best_runner
+)
+
+RunConfig = RunnerConfig
+from moxing.runners.llama_cpp import LlamaCppRunner
+from moxing.runners.vllm import VLLMRunner
+from moxing.runners.ollama import OllamaRunner
 
 console = Console()
-
-
-@dataclass
-class RunConfig:
-    """Complete configuration for running a model."""
-    model_path: Path
-    device_config: DeviceConfig
-    host: str = "127.0.0.1"
-    port: int = 8080
-    ctx_size: int = 4096
-    batch_size: int = 512
-    flash_attn: bool = True
-    verbose: bool = False
-    extra_args: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_server_kwargs(self) -> dict:
-        """Convert to LlamaServer kwargs."""
-        device = self.device_config.device
-        if device.backend == BackendType.CPU:
-            device_str = "cpu"
-        elif device.backend == BackendType.METAL:
-            device_str = f"MTL{device.index}"
-        elif device.backend == BackendType.CUDA:
-            device_str = f"CUDA{device.index}"
-        elif device.backend == BackendType.VULKAN:
-            device_str = f"Vulkan{device.index}"
-        else:
-            device_str = "auto"
-        
-        return {
-            "model": str(self.model_path),
-            "host": self.host,
-            "port": self.port,
-            "ctx_size": self.ctx_size,
-            "n_gpu_layers": self.device_config.n_gpu_layers,
-            "device": device_str,
-            "gpu_backend": self.device_config.backend.value,
-            "verbose": self.verbose,
-            **self.extra_args
-        }
 
 
 class AutoRunner:
@@ -88,21 +59,23 @@ class AutoRunner:
         self,
         model_dir: Optional[Path] = None,
         auto_detect_device: bool = True,
-        prefer_backend: Optional[str] = None
+        prefer_backend: Optional[str] = None,
+        runner_type: str = "auto"
     ):
         self.model_dir = model_dir or ModelDownloader().cache_dir
         self.auto_detect_device = auto_detect_device
         self.prefer_backend = prefer_backend
+        self.runner_type = runner_type
         
         self._detector = DeviceDetector() if auto_detect_device else None
         self._downloader = ModelDownloader(model_dir)
-        self._current_server: Optional[LlamaServer] = None
+        self._current_server: Optional[BaseRunner] = None
     
     def detect_config(
         self,
         model_path: Union[str, Path],
         ctx_size: int = 4096
-    ) -> RunConfig:
+    ) -> RunnerConfig:
         """Detect optimal configuration for a model."""
         model_path = Path(model_path)
         
@@ -111,6 +84,11 @@ class AutoRunner:
         
         model_size_gb = estimate_model_size_gb(str(model_path))
         
+        runner = self.runner_type
+        if runner == "auto":
+            runner = detect_best_runner(model_path=model_path)
+        
+        device_config = None
         if self.auto_detect_device:
             device_config = self._detector.get_best_device(model_size_gb)
         else:
@@ -123,10 +101,11 @@ class AutoRunner:
         if ctx_size == 0 and device_config.recommended_ctx > 0:
             ctx_size = device_config.recommended_ctx
         
-        return RunConfig(
-            model_path=model_path,
-            device_config=device_config,
-            ctx_size=ctx_size
+        return RunnerConfig(
+            model=str(model_path),
+            runner_type=runner,
+            ctx_size=ctx_size,
+            backend=device_config.backend.value,
         )
     
     def download(
@@ -186,21 +165,23 @@ class AutoRunner:
         quant: str = "Q4_K_M",
         source: str = "auto",
         ctx_size: int = 4096,
-        chat: bool = True
+        chat: bool = True,
+        runner_type: str = "auto"
     ) -> str:
         """Download (if needed) and run a model."""
         model_path = self.resolve_model(model, quant, source)
         config = self.detect_config(model_path, ctx_size)
+        config.runner_type = runner_type if runner_type != "auto" else config.runner_type
         
         self._print_config(config)
         
         from moxing.client import Client
         
-        with LlamaServer(**config.to_server_kwargs()) as server:
-            import time
+        runner = create_runner(config)
+        with runner:
             time.sleep(2)
             
-            client = Client(server.base_url)
+            client = Client(runner.base_url)
             
             if chat:
                 response = client.chat.completions.create(
@@ -243,17 +224,20 @@ class AutoRunner:
         source: str = "auto",
         ctx_size: int = 4096,
         port: int = 8080,
+        runner_type: str = "auto",
         **kwargs
-    ) -> LlamaServer:
+    ) -> BaseRunner:
         """Create a server instance for a model."""
         model_path = self.resolve_model(model, quant, source)
         config = self.detect_config(model_path, ctx_size)
         config.port = port
+        config.runner_type = runner_type if runner_type != "auto" else config.runner_type
         config.extra_args.update(kwargs)
         
         self._print_config(config)
         
-        return LlamaServer(**config.to_server_kwargs())
+        runner = create_runner(config)
+        return runner
     
     def quick_chat(
         self,
@@ -281,15 +265,14 @@ class AutoRunner:
         
         console.print(table)
     
-    def _print_config(self, config: RunConfig):
+    def _print_config(self, config: RunnerConfig):
         """Print the run configuration."""
         panel = Panel(
-            f"[green]Model:[/green] {config.model_path.name}\n"
-            f"[blue]Backend:[/blue] {config.device_config.backend.value}\n"
-            f"[yellow]Device:[/yellow] {config.device_config.device}\n"
-            f"[magenta]GPU Layers:[/magenta] {config.device_config.n_gpu_layers if config.device_config.n_gpu_layers >= 0 else 'all'}\n"
-            f"[cyan]Context:[/cyan] {config.ctx_size}\n"
-            f"[dim]{config.device_config.notes}[/dim]",
+            f"[green]Model:[/green] {Path(config.model).name}\n"
+            f"[blue]Runner:[/blue] {config.runner_type}\n"
+            f"[yellow]Backend:[/yellow] {config.backend}\n"
+            f"[magenta]Context:[/magenta] {config.ctx_size}\n"
+            f"[cyan]Port:[/cyan] {config.port}",
             title="Configuration"
         )
         console.print(panel)
@@ -304,19 +287,21 @@ def quick_run(
     model: str,
     prompt: str = "Hello!",
     quant: str = "Q4_K_M",
+    runner_type: str = "auto",
     **kwargs
 ) -> str:
     """Quick run function for convenience."""
-    runner = AutoRunner()
-    return runner.run(model, prompt, quant=quant, **kwargs)
+    runner = AutoRunner(runner_type=runner_type)
+    return runner.run(model, prompt, quant=quant, runner_type=runner_type, **kwargs)
 
 
 def quick_server(
     model: str,
     quant: str = "Q4_K_M",
     port: int = 8080,
+    runner_type: str = "auto",
     **kwargs
-) -> LlamaServer:
+) -> BaseRunner:
     """Quick server function for convenience."""
-    runner = AutoRunner()
-    return runner.server(model, quant=quant, port=port, **kwargs)
+    runner = AutoRunner(runner_type=runner_type)
+    return runner.server(model, quant=quant, port=port, runner_type=runner_type, **kwargs)

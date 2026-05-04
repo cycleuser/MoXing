@@ -96,7 +96,7 @@ class ServerConfig:
     mirostat: int = 0
     mirostat_tau: float = 5.0
     mirostat_eta: float = 0.1
-    fit_on: bool = True
+    fit_on: bool = False
     kv_unified: bool = True
     cache_reuse: int = 0
     tune_config: Optional[Dict[str, Any]] = None
@@ -159,7 +159,7 @@ class LlamaServer:
         batch_size: int = 512,
         ubatch_size: int = 512,
         n_threads: int = -1,
-        fit_on: bool = True,
+        fit_on: bool = False,
         kv_unified: bool = True,
         cache_reuse: int = 0,
         tune_config: Optional[Dict[str, Any]] = None,
@@ -728,7 +728,11 @@ class LlamaServer:
         
         while time.time() - start < timeout:
             try:
-                resp = httpx.get(f"{self._base_url}/health", timeout=5)
+                resp = httpx.get(
+                    f"{self._base_url}/health",
+                    timeout=5,
+                    follow_redirects=True
+                )
                 if resp.status_code == 200:
                     try:
                         props = httpx.get(f"{self._base_url}/props", timeout=5)

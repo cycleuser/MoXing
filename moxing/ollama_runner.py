@@ -206,10 +206,12 @@ class OllamaRunnerBinary:
     
     def _get_runner_path(self) -> Path:
         """获取 runner 可执行文件路径"""
+        candidates = []
         if self.runner_type == "ollama":
             candidates = [
                 self.bin_dir / f"ollama-runner-{self.backend}",
                 self.bin_dir / "ollama-runner",
+                self.bin_dir / "llama-server",
             ]
         else:
             candidates = [
@@ -233,16 +235,30 @@ class OllamaRunnerBinary:
         
         backend = self.backend if self.backend != "auto" else "cpu"
         
+        # Search in order: ollama-specific, official, standard
+        candidate_names = []
         if self.runner_type == "ollama":
-            bin_name = f"ollama-{platform}-{backend}"
+            candidate_names.extend([
+                f"ollama-{platform}-{backend}",
+                f"{platform}-{backend}",
+            ])
+        elif self.runner_type == "official":
+            candidate_names.extend([
+                f"official-{platform}-{backend}",
+                f"{platform}-{backend}",
+            ])
         else:
-            bin_name = f"official-{platform}-{backend}"
+            candidate_names.extend([
+                f"{self.runner_type}-{platform}-{backend}",
+                f"{platform}-{backend}",
+            ])
         
-        bin_path = moxing_dir / "bin" / bin_name
-        if bin_path.exists():
-            return bin_path
+        for name in candidate_names:
+            bin_path = moxing_dir / "bin" / name
+            if bin_path.exists():
+                return bin_path
         
-        raise FileNotFoundError(f"找不到 {self.runner_type} {backend} 后端的二进制文件: {bin_path}")
+        raise FileNotFoundError(f"找不到 {self.runner_type} {backend} 后端的二进制文件: {moxing_dir}/bin/[{', '.join(candidate_names)}]")
     
     def _detect_platform(self) -> str:
         """检测平台"""
