@@ -103,10 +103,10 @@ def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Server host (use 0.0.0.0 for LAN access)"),
     port: int = typer.Option(8080, "-p", "--port", help="Server port (0 for auto)"),
     ctx_size: int = typer.Option(0, "-c", "--ctx-size", help="Context size (0=auto-detect based on VRAM)"),
-    source: str = typer.Option("auto", "-s", "--source", help="Model source (huggingface/modelscope/auto)"),
+    source: str = typer.Option("modelscope", "-s", "--source", help="Model source (huggingface/modelscope, default: modelscope)"),
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, vulkan, cuda, rocm, metal, cpu"),
     device: str = typer.Option("auto", "-d", "--device", help="Device: auto, gpu0, gpu1, cpu (use 'moxing devices' to list)"),
-    runner: str = typer.Option("official", "-r", "--runner", help="Runner: official, ollama (binaries type)"),
+    runner: str = typer.Option("auto", "-r", "--runner", help="Runner engine: auto, llama_cpp, vllm, ollama"),
     auto: bool = typer.Option(True, "--auto/--no-auto", help="Auto-detect best device"),
     auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed monitoring in terminal"),
@@ -137,30 +137,49 @@ def serve(
     mirostat: int = typer.Option(0, "--mirostat", help="Mirostat sampling: 0=disabled, 1=mirostat, 2=mirostat 2.0"),
     mirostat_tau: float = typer.Option(5.0, "--mirostat-tau", help="Mirostat target perplexity"),
     mirostat_eta: float = typer.Option(0.1, "--mirostat-eta", help="Mirostat learning rate"),
+    tensor_parallel_size: int = typer.Option(1, "--tp", "--tensor-parallel-size", help="Tensor parallelism (vLLM: number of GPUs)"),
+    gpu_memory_utilization: float = typer.Option(0.9, "--gpu-mem-util", help="GPU memory utilization ratio (vLLM: 0.0-1.0)"),
+    max_model_len: int = typer.Option(0, "--max-model-len", help="Maximum model context length (vLLM)"),
+    dtype: str = typer.Option("auto", "--dtype", help="Data type: auto, float16, bfloat16, float32 (vLLM)"),
+    quantization: Optional[str] = typer.Option(None, "-qz", "--quantization", help="Quantization method: awq, gptq, fp8, gguf (vLLM)"),
+    enable_prefix_caching: bool = typer.Option(False, "--prefix-cache", help="Enable prefix caching (vLLM)"),
+    enforce_eager: bool = typer.Option(False, "--eager", help="Disable CUDA graph optimization (vLLM)"),
+    attention_backend: str = typer.Option("auto", "--attn-backend", help="Attention backend: auto, flash_attn, flashinfer, triton (vLLM)"),
 ):
     """Start the LLM server with automatic configuration.
     
-    Runner Types:
-    - official: Official llama.cpp binaries (latest Qwen3.5, Gemma4 support)
-    - ollama: Ollama patched binaries (extra model support like GLM-4.7)
+    Runner Engines:
+    - auto: Auto-detect best runner (llama_cpp for GGUF, vllm for HF repos)
+    - llama_cpp: llama.cpp server (GGUF models, all backends)
+    - vllm: vLLM engine (HuggingFace/GGUF, CUDA/ROCm only, higher throughput)
+    - ollama: Ollama runner (Ollama model format)
     
     Host Binding:
     - 127.0.0.1 (default): Local access only
     - 0.0.0.0: Allow LAN access (all network interfaces)
     
-    KV Cache Quantization:
+    KV Cache Quantization (llama_cpp):
     - auto: Automatically choose based on available memory
     - f16: Full precision (16-bit)
     - q8_0: 8-bit quantization (high quality)
     - q5_0: 5-bit quantization (good quality)
     - q4_0: 4-bit quantization (balanced, recommended)
     
-    TurboQuant (Google arXiv:2504.19874):
+    TurboQuant (Google arXiv:2504.19874, llama_cpp):
     - tq4: 4-bit TurboQuant (high quality)
     - tq3.5: 3.5-bit mixed precision (quality neutral) ⭐
     - tq3: 3-bit TurboQuant (good quality)
     - tq2.5: 2.5-bit mixed precision (slight loss) ⭐
     - tq2: 2-bit TurboQuant (maximum compression)
+    
+    vLLM Options:
+    - --tp N: Tensor parallelism across N GPUs
+    - --gpu-mem-util R: GPU memory utilization (0.0-1.0)
+    - --max-model-len N: Maximum context length
+    - --dtype TYPE: Data type (auto/float16/bfloat16/float32)
+    - --quantization METHOD: Quantization (awq/gptq/fp8/gguf)
+    - --prefix-cache: Enable prefix caching
+    - --attn-backend BACKEND: Attention backend
     
     Memory Optimization:
     - --cpu-offload N: Offload N layers to CPU RAM
@@ -176,7 +195,8 @@ def serve(
     - --slots N: Number of parallel request slots
     
     Multi-GPU:
-    - --tensor-split R: Split model across GPUs (e.g., '50,50')
+    - --tensor-split R: Split model across GPUs (llama_cpp, e.g., '50,50')
+    - --tp N: Tensor parallelism (vLLM, number of GPUs)
     - --main-gpu N: Set main GPU index
     
     Context Extension:
@@ -184,8 +204,10 @@ def serve(
     - --rope-scale N: Context scaling factor (2.0 = 2x context)
     
     Examples:
-    - Auto KV cache: moxing serve model.gguf
-    - 4-bit cache: moxing serve model.gguf --kv-cache q4_0
+    - GGUF model: moxing serve model.gguf
+    - HuggingFace: moxing serve Qwen/Qwen2.5-7B-Instruct -r vllm
+    - vLLM multi-GPU: moxing serve model -r vllm --tp 2
+    - Auto KV cache: moxing serve model.gguf --kv-cache q4_0
     - TurboQuant 3.5: moxing serve model.gguf --kv-cache tq3.5
     - CPU offload: moxing serve model.gguf --cpu-offload 10
     - MoE offload: moxing serve model.gguf --cpu-moe
@@ -330,160 +352,238 @@ def serve(
             console.print(f"[red]Error: {e}[/red]")
             raise typer.Exit(1)
     else:
-        from moxing.device import DeviceDetector, BackendType
+        from moxing.device import DeviceDetector, BackendType, Device, DeviceConfig
         from moxing.server import LlamaServer
+        from moxing.runners.base import create_runner, RunnerConfig, detect_best_runner
+        from moxing.runners.vllm import VLLMRunner
         
-        detector = DeviceDetector()
-        detector.detect()
+        effective_runner = runner
+        if effective_runner == "auto":
+            effective_runner = detect_best_runner(
+                model_path=model_path if model_path else None,
+                model_name=model,
+            )
         
-        model_size_gb = 0
-        model_path_obj = Path(model)
-        if model_path_obj.exists():
-            model_size_gb = model_path_obj.stat().st_size / (1024 ** 3)
+        if effective_runner == "vllm":
+            if not VLLMRunner.is_vllm_available():
+                console.print("[yellow]vLLM not installed, attempting to install...[/yellow]")
+                from moxing.vllm_installer import ensure_vllm
+                if not ensure_vllm():
+                    console.print("[red]vLLM installation failed. Falling back to llama_cpp.[/red]")
+                    effective_runner = "llama_cpp"
         
-        if device != "auto":
-            device_config = detector.get_device_config_by_name(device, backend, model_size_gb)
-        elif backend != "auto":
-            try:
-                backend_type = BackendType(backend.lower())
-                device_config = detector.get_best_device(model_size_gb)
-                device_config.backend = backend_type
-            except ValueError:
-                console.print(f"[red]Unknown backend: {backend}[/red]")
-                raise typer.Exit(1)
-        else:
-            device_config = detector.get_best_device(model_size_gb)
-        
-        if ctx_size == 0:
-            ctx_size = device_config.recommended_ctx
-        
-        device_str = "auto"
-        if device_config.device.backend != BackendType.CPU:
-            has_amd_perm, _ = detector.check_amd_permission()
+        if effective_runner in ("vllm",):
+            from moxing.runners.vllm import VLLMRunner
             
-            if device_config.backend == BackendType.ROCM and not has_amd_perm:
-                console.print("[yellow]Note: Using auto device selection (ROCm permission denied)[/yellow]")
-                device_str = "auto"
-            elif device_config.backend == BackendType.VULKAN:
-                device_str = "auto"
-                console.print("[dim]Using auto Vulkan device selection[/dim]")
-            elif device_config.backend == BackendType.METAL:
-                device_str = f"MTL{device_config.device.index}"
-            elif device_config.backend == BackendType.ROCM:
-                device_str = f"ROCm{device_config.device.index}"
-            elif device_config.backend == BackendType.CUDA:
-                device_str = f"CUDA{device_config.device.index}"
-            else:
-                device_str = "auto"
-        
-        console.print(Panel(
-            f"[green]Model:[/green] {model}\n"
-            f"[blue]Backend:[/blue] {device_config.backend.value}\n"
-            f"[yellow]Device:[/yellow] {device_config.device.name}\n"
-            f"[magenta]GPU Layers:[/magenta] {device_config.n_gpu_layers if device_config.n_gpu_layers >= 0 else 'all'}\n"
-            f"[cyan]Context:[/cyan] {ctx_size}\n"
-            f"[dim]KV Cache: {kv_cache}[/dim]",
-            title="Configuration"
-        ))
-        
-        device_display = device_config.device.name[:30]
-        backend_display = device_config.backend.value.upper()
-        model_short = Path(model).name[:20] if Path(model).exists() else model[:20]
-        server_title = f"{model_short} | {device_display} | {backend_display}"
-        
-        if kv_cache != "f16":
-            server_title += f" | {kv_cache}"
-        
-        try:
-            server = LlamaServer(
+            runner_config = RunnerConfig(
                 model=model,
+                runner_type="vllm",
                 host=host,
                 port=port,
-                ctx_size=ctx_size,
-                n_gpu_layers=device_config.n_gpu_layers,
-                device=device_str,
-                gpu_backend=device_config.backend.value,
-                runner=runner,
-                kv_cache_quant=kv_cache,
-                cpu_offload=cpu_offload > 0,
-                cpu_offload_layers=cpu_offload,
-                cpu_moe=cpu_moe,
+                backend=backend if backend != "auto" else "cuda",
+                device=device,
+                ctx_size=ctx_size if ctx_size > 0 else 0,
+                tensor_parallel_size=tensor_parallel_size,
+                gpu_memory_utilization=gpu_memory_utilization,
+                max_model_len=max_model_len,
+                dtype=dtype,
+                quantization=quantization,
+                enable_prefix_caching=enable_prefix_caching,
+                enforce_eager=enforce_eager,
+                attention_backend=attention_backend,
                 speculative_draft=speculative_draft,
                 speculative_max=speculative_max,
-                speculative_min=speculative_min,
-                speculative_pmin=speculative_pmin,
-                lookahead=lookahead,
-                cache_prompts=cache_prompts,
-                cache_rem=cache_rem,
-                slots=slots,
-                cont_batching=cont_batching,
-                mlock=mlock,
-                no_kv_offload=no_kv_offload,
-                tensor_split=tensor_split,
-                main_gpu=main_gpu,
-                numa=numa,
-                defrag_thold=defrag_thold,
-                rope_scaling=rope_scaling,
-                rope_scale=rope_scale,
-                parallel=parallel,
-                mirostat=mirostat,
-                mirostat_tau=mirostat_tau,
-                mirostat_eta=mirostat_eta,
+                verbose=verbose,
             )
             
-            cache_info = f"\n[dim]KV Cache: {kv_cache}" if kv_cache != "auto" else ""
-            if cpu_offload > 0:
-                cache_info += f"\n[dim]CPU Offload: {cpu_offload} layers"
+            server = create_runner(runner_config)
+            
+            model_short = Path(model).name[:20] if Path(model).exists() else model[:20]
+            server_title = f"{model_short} | vLLM | {backend}"
             
             console.print(Panel(
                 f"[green]Server:[/green] http://{host}:{port}\n"
                 f"[blue]OpenAI API:[/blue] http://{host}:{port}/v1\n"
-                f"[magenta]Backend:[/magenta] {device_config.backend.value}\n"
-                f"[cyan]Device:[/cyan] {device_config.device.name}"
-                f"{cache_info}\n"
+                f"[magenta]Runner:[/magenta] vLLM\n"
+                f"[cyan]Tensor Parallel:[/cyan] {tensor_parallel_size}\n"
                 f"[yellow]Press Ctrl+C to stop[/yellow]",
                 title=server_title
             ))
             
             server.start(wait=False)
             
-            import time
-            time.sleep(3)
-            
-            if server._process and server._process.poll() is not None:
-                stdout, stderr = server._process.communicate()
-                console.print(f"\n[red bold]Server failed to start![/red bold]")
-                console.print(f"[dim]Exit code: {server._process.returncode}[/dim]")
-                if stdout:
-                    console.print(f"[dim]stdout:[/dim]")
-                    for line in stdout.strip().split("\n")[-20:]:
-                        if line.strip():
-                            console.print(f"[dim]  {line}[/dim]")
-                if stderr:
-                    console.print(f"[red]stderr:[/red]")
-                    for line in stderr.strip().split("\n")[-20:]:
-                        if line.strip():
-                            console.print(f"[red]  {line}[/red]")
-                console.print(f"\n[yellow]Troubleshooting tips:[/yellow]")
-                console.print(f"  • Check if the model file is valid")
-                console.print(f"  • Try with smaller context: -c 4096")
-                console.print(f"  • Try different backend: -b vulkan")
+            try:
+                serve_with_verbose_monitor(server, verbose=verbose, web_monitor=web_monitor)
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Shutting down...[/yellow]")
+                server.stop()
+            except Exception as e:
+                console.print(f"[red]Error: {e}[/red]")
+                import traceback
+                console.print(f"[dim]{traceback.format_exc()}[/dim]")
                 raise typer.Exit(1)
-        except RuntimeError as e:
-            console.print(f"\n[red bold]Failed to start server![/red bold]")
-            console.print(f"[red]{e}[/red]")
-            raise typer.Exit(1)
-        
-        try:
-            serve_with_verbose_monitor(server, verbose=verbose, web_monitor=web_monitor)
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Shutting down...[/yellow]")
-            server.stop()
-        except Exception as e:
-            console.print(f"[red]Error: {e}[/red]")
-            import traceback
-            console.print(f"[dim]{traceback.format_exc()}[/dim]")
-            raise typer.Exit(1)
+        else:
+            detector = DeviceDetector()
+            detector.detect()
+            
+            model_size_gb = 0
+            model_path_obj = Path(model)
+            if model_path_obj.exists():
+                model_size_gb = model_path_obj.stat().st_size / (1024 ** 3)
+            
+            if device != "auto":
+                device_config = detector.get_device_config_by_name(device, backend, model_size_gb)
+            elif backend != "auto":
+                try:
+                    backend_type = BackendType(backend.lower())
+                    if backend_type == BackendType.CPU:
+                        device_config = DeviceConfig(
+                            backend=BackendType.CPU,
+                            device=Device(index=0, name="CPU", backend=BackendType.CPU),
+                            n_gpu_layers=0,
+                            n_cpu_layers=80,
+                            recommended_ctx=ctx_size if ctx_size > 0 else 4096,
+                            notes="Using CPU only"
+                        )
+                    else:
+                        device_config = detector.get_best_device(model_size_gb)
+                        device_config.backend = backend_type
+                except ValueError:
+                    console.print(f"[red]Unknown backend: {backend}[/red]")
+                    raise typer.Exit(1)
+            else:
+                device_config = detector.get_best_device(model_size_gb)
+            
+            if ctx_size == 0:
+                ctx_size = device_config.recommended_ctx
+            
+            device_str = "auto"
+            if device_config.device.backend != BackendType.CPU:
+                has_amd_perm, _ = detector.check_amd_permission()
+                
+                if device_config.backend == BackendType.ROCM and not has_amd_perm:
+                    console.print("[yellow]Note: Using auto device selection (ROCm permission denied)[/yellow]")
+                    device_str = "auto"
+                elif device_config.backend == BackendType.VULKAN:
+                    device_str = "auto"
+                    console.print("[dim]Using auto Vulkan device selection[/dim]")
+                elif device_config.backend == BackendType.METAL:
+                    device_str = f"MTL{device_config.device.index}"
+                elif device_config.backend == BackendType.ROCM:
+                    device_str = f"ROCm{device_config.device.index}"
+                elif device_config.backend == BackendType.CUDA:
+                    device_str = f"CUDA{device_config.device.index}"
+                else:
+                    device_str = "auto"
+            
+            console.print(Panel(
+                f"[green]Model:[/green] {model}\n"
+                f"[blue]Backend:[/blue] {device_config.backend.value}\n"
+                f"[yellow]Device:[/yellow] {device_config.device.name}\n"
+                f"[magenta]GPU Layers:[/magenta] {device_config.n_gpu_layers if device_config.n_gpu_layers >= 0 else 'all'}\n"
+                f"[cyan]Context:[/cyan] {ctx_size}\n"
+                f"[dim]KV Cache: {kv_cache}[/dim]",
+                title="Configuration"
+            ))
+            
+            device_display = device_config.device.name[:30]
+            backend_display = device_config.backend.value.upper()
+            model_short = Path(model).name[:20] if Path(model).exists() else model[:20]
+            server_title = f"{model_short} | {device_display} | {backend_display}"
+            
+            if kv_cache != "f16":
+                server_title += f" | {kv_cache}"
+            
+            try:
+                server = LlamaServer(
+                    model=model,
+                    host=host,
+                    port=port,
+                    ctx_size=ctx_size,
+                    n_gpu_layers=device_config.n_gpu_layers,
+                    device=device_str,
+                    gpu_backend=device_config.backend.value,
+                    runner="official",
+                    kv_cache_quant=kv_cache,
+                    cpu_offload=cpu_offload > 0,
+                    cpu_offload_layers=cpu_offload,
+                    cpu_moe=cpu_moe,
+                    speculative_draft=speculative_draft,
+                    speculative_max=speculative_max,
+                    speculative_min=speculative_min,
+                    speculative_pmin=speculative_pmin,
+                    lookahead=lookahead,
+                    cache_prompts=cache_prompts,
+                    cache_rem=cache_rem,
+                    slots=slots,
+                    cont_batching=cont_batching,
+                    mlock=mlock,
+                    no_kv_offload=no_kv_offload,
+                    tensor_split=tensor_split,
+                    main_gpu=main_gpu,
+                    numa=numa,
+                    defrag_thold=defrag_thold,
+                    rope_scaling=rope_scaling,
+                    rope_scale=rope_scale,
+                    parallel=parallel,
+                    mirostat=mirostat,
+                    mirostat_tau=mirostat_tau,
+                    mirostat_eta=mirostat_eta,
+                )
+                
+                cache_info = f"\n[dim]KV Cache: {kv_cache}" if kv_cache != "auto" else ""
+                if cpu_offload > 0:
+                    cache_info += f"\n[dim]CPU Offload: {cpu_offload} layers"
+                
+                console.print(Panel(
+                    f"[green]Server:[/green] http://{host}:{port}\n"
+                    f"[blue]OpenAI API:[/blue] http://{host}:{port}/v1\n"
+                    f"[magenta]Backend:[/magenta] {device_config.backend.value}\n"
+                    f"[cyan]Device:[/cyan] {device_config.device.name}"
+                    f"{cache_info}\n"
+                    f"[yellow]Press Ctrl+C to stop[/yellow]",
+                    title=server_title
+                ))
+                
+                server.start(wait=False)
+                
+                import time
+                time.sleep(3)
+                
+                if server._process and server._process.poll() is not None:
+                    stdout, stderr = server._process.communicate()
+                    console.print(f"\n[red bold]Server failed to start![/red bold]")
+                    console.print(f"[dim]Exit code: {server._process.returncode}[/dim]")
+                    if stdout:
+                        console.print(f"[dim]stdout:[/dim]")
+                        for line in stdout.strip().split("\n")[-20:]:
+                            if line.strip():
+                                console.print(f"[dim]  {line}[/dim]")
+                    if stderr:
+                        console.print(f"[red]stderr:[/red]")
+                        for line in stderr.strip().split("\n")[-20:]:
+                            if line.strip():
+                                console.print(f"[red]  {line}[/red]")
+                    console.print(f"\n[yellow]Troubleshooting tips:[/yellow]")
+                    console.print(f"  • Check if the model file is valid")
+                    console.print(f"  • Try with smaller context: -c 4096")
+                    console.print(f"  • Try different backend: -b vulkan")
+                    raise typer.Exit(1)
+            except RuntimeError as e:
+                console.print(f"\n[red bold]Failed to start server![/red bold]")
+                console.print(f"[red]{e}[/red]")
+                raise typer.Exit(1)
+            
+            try:
+                serve_with_verbose_monitor(server, verbose=verbose, web_monitor=web_monitor)
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Shutting down...[/yellow]")
+                server.stop()
+            except Exception as e:
+                console.print(f"[red]Error: {e}[/red]")
+                import traceback
+                console.print(f"[dim]{traceback.format_exc()}[/dim]")
+                raise typer.Exit(1)
 
 
 @app.command()
@@ -493,7 +593,7 @@ def run(
     quant: str = typer.Option("Q4_K_M", "-q", "--quant", help="Quantization"),
     tokens: int = typer.Option(256, "-n", "--tokens", help="Max tokens to generate"),
     ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size"),
-    source: str = typer.Option("auto", "-s", "--source", help="Model source"),
+    source: str = typer.Option("modelscope", "-s", "--source", help="Model source (default: modelscope)"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed monitoring and statistics"),
     backend: str = typer.Option("auto", "-b", "--backend", help="Backend: auto, vulkan, cuda, metal, cpu"),
     kv_cache: str = typer.Option("auto", "--kv-cache", help="KV cache quantization"),
@@ -593,7 +693,7 @@ def chat_cmd(
     model: str = typer.Argument(..., help="Model name or path"),
     quant: str = typer.Option("Q4_K_M", "-q", "--quant", help="Quantization"),
     ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size"),
-    source: str = typer.Option("auto", "-s", "--source", help="Model source"),
+    source: str = typer.Option("modelscope", "-s", "--source", help="Model source (default: modelscope)"),
 ):
     """Interactive chat with a model."""
     from moxing.runner import AutoRunner
@@ -641,11 +741,14 @@ def chat_cmd(
 def download(
     model: str = typer.Argument(..., help="Model name (e.g., llama-3.2-3b) or repo (user/model)"),
     quant: str = typer.Option("Q4_K_M", "-q", "--quant", help="Quantization type"),
-    source: str = typer.Option("auto", "-s", "--source", help="Model source (huggingface/modelscope/auto)"),
+    source: str = typer.Option("modelscope", "-s", "--source", help="Model source (huggingface/modelscope/auto, default: modelscope)"),
     output: Optional[Path] = typer.Option(None, "-o", "--output", help="Output directory"),
     list_files: bool = typer.Option(False, "-l", "--list", help="List available files"),
 ):
-    """Download a model from HuggingFace or ModelScope."""
+    """Download a model from ModelScope (default) or HuggingFace.
+    
+    Use --source huggingface to download from HuggingFace instead.
+    """
     from moxing.models import ModelDownloader, ModelRegistry
     
     downloader = ModelDownloader(output)

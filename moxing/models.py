@@ -54,10 +54,26 @@ class ModelDownloader:
     HF_DOWNLOAD = "https://huggingface.co"
     MS_DOWNLOAD = "https://modelscope.cn/models"
     
+    # Alternative ModelScope endpoints (API v1 was deprecated)
+    MS_API_FALLBACKS = [
+        "https://modelscope.cn/api/v2",
+        "https://www.modelscope.cn/api/v1",
+    ]
+    
     def __init__(self, cache_dir: Optional[Path] = None):
         self.cache_dir = cache_dir or DEFAULT_MODEL_DIR
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self._client = httpx.Client(follow_redirects=True, timeout=60)
+        
+        # Create httpx client, handling SOCKS proxy if configured
+        self._client = self._create_httpx_client()
+    
+    def _create_httpx_client(self) -> httpx.Client:
+        """Create httpx client with proper proxy handling."""
+        try:
+            return httpx.Client(follow_redirects=True, timeout=60)
+        except ImportError:
+            console.print("[yellow]httpx proxy issue. Installing httpx[socks] may help.[/yellow]")
+            raise
     
     def search(
         self,
@@ -65,14 +81,14 @@ class ModelDownloader:
         source: str = "auto",
         limit: int = 20
     ) -> List[ModelInfo]:
-        """Search for GGUF models."""
+        """Search for GGUF models. Default source is ModelScope."""
         results = []
         
-        if source in ("auto", "huggingface"):
-            results.extend(self._search_hf(query, limit))
+        if source in ("auto", "modelscope"):
+            results.extend(self._search_modelscope(query, limit))
         
-        if source in ("auto", "modelscope") and len(results) < limit:
-            results.extend(self._search_modelscope(query, limit - len(results)))
+        if source in ("auto", "huggingface") and len(results) < limit:
+            results.extend(self._search_hf(query, limit - len(results)))
         
         return results[:limit]
     
@@ -112,7 +128,57 @@ class ModelDownloader:
         return results
     
     def _search_modelscope(self, query: str, limit: int) -> List[ModelInfo]:
-        """Search ModelScope for GGUF models."""
+        """Search ModelScope for GGUF models. Uses modelscope library when available."""
+        results = []
+        
+        try:
+            from modelscope.hub.api import HubApi
+            api = HubApi()
+            
+            # Try searching by name with GGUF filter
+            for search_query in [f"{query}-GGUF", f"{query}-gguf", query]:
+                if len(results) >= limit:
+                    break
+                try:
+                    models = api.list_models(owner_or_group=search_query, page_size=min(limit * 3, 50))
+                    if not models:
+                        continue
+                    for item in models:
+                        if len(results) >= limit:
+                            break
+                        repo_id = item.get('Path', '')
+                        name = item.get('Name', '')
+                        if not repo_id and name:
+                            org = item.get('Organization', {}).get('Name', '')
+                            if org:
+                                repo_id = f"{org}/{name}"
+                            else:
+                                repo_id = name
+                        if any(r.repo == repo_id for r in results):
+                            continue
+                        gguf_files = self._list_gguf_files_modelscope_lib(api, repo_id, item)
+                        for filename, size in gguf_files[:3]:
+                            quant = self._extract_quantization(filename)
+                            results.append(ModelInfo(
+                                name=repo_id.split("/")[-1],
+                                repo=repo_id,
+                                filename=filename,
+                                size_bytes=size,
+                                quantization=quant,
+                                source="modelscope"
+                            ))
+                except Exception:
+                    continue
+        except ImportError:
+            pass
+        
+        if not results:
+            results.extend(self._search_modelscope_api(query, limit))
+        
+        return results
+    
+    def _search_modelscope_api(self, query: str, limit: int) -> List[ModelInfo]:
+        """Fallback: Search ModelScope via HTTP API (may not work as API v1 is deprecated)."""
         results = []
         try:
             resp = self._client.get(
@@ -131,7 +197,6 @@ class ModelDownloader:
                 repo_id = item.get("Path", "")
                 if not repo_id:
                     continue
-                
                 gguf_files = self._list_gguf_files_modelscope(repo_id)
                 for filename, size in gguf_files[:3]:
                     quant = self._extract_quantization(filename)
@@ -145,8 +210,36 @@ class ModelDownloader:
                     ))
         except Exception as e:
             console.print(f"[yellow]ModelScope search error: {e}[/yellow]")
-        
         return results
+    
+    def _list_gguf_files_modelscope_lib(self, api, repo_id: str, model_info: dict = None) -> List[tuple]:
+        """List GGUF files from ModelScope using the modelscope library."""
+        files = []
+        try:
+            if model_info and 'ModelInfos' in model_info:
+                model_infos = model_info.get('ModelInfos', {})
+                gguf_info = model_infos.get('gguf', {})
+                gguf_file_list = gguf_info.get('gguf_file_list', [])
+                if gguf_file_list:
+                    for entry in gguf_file_list:
+                        file_infos = entry.get('file_info', [])
+                        for f in file_infos:
+                            name = f.get('name', '')
+                            if name.endswith('.gguf'):
+                                size = f.get('size', 0)
+                                files.append((name, size))
+                    return files
+            
+            raw_files = api.get_model_files(repo_id)
+            for item in raw_files:
+                name = item.get('Name', item.get('Path', ''))
+                if name.endswith('.gguf'):
+                    size = item.get('Size', 0)
+                    files.append((name, size))
+            files.sort(key=lambda x: x[1], reverse=True)
+        except Exception:
+            pass
+        return files
     
     def _list_gguf_files_hf(self, repo_id: str) -> List[tuple]:
         """List GGUF files in a HuggingFace repo."""
@@ -166,7 +259,14 @@ class ModelDownloader:
         return files
     
     def _list_gguf_files_modelscope(self, repo_id: str) -> List[tuple]:
-        """List GGUF files in a ModelScope repo."""
+        """List GGUF files in a ModelScope repo. Uses library when available."""
+        try:
+            from modelscope.hub.api import HubApi
+            api = HubApi()
+            return self._list_gguf_files_modelscope_lib(api, repo_id)
+        except ImportError:
+            pass
+        
         files = []
         try:
             resp = self._client.get(
@@ -202,17 +302,17 @@ class ModelDownloader:
             return self._list_gguf_files_hf(repo)
     
     def _detect_source(self, repo: str, source: str) -> str:
-        """Detect the source from repo string."""
+        """Detect the source from repo string. Default is ModelScope."""
         if source != "auto":
             return source
         
-        if "modelscope" in repo.lower():
-            return "modelscope"
+        if "huggingface" in repo.lower() or "huggingface.co" in repo.lower():
+            return "huggingface"
         
         if repo.startswith("models--"):
             return "huggingface"
         
-        return "huggingface"
+        return "modelscope"
     
     def _extract_quantization(self, filename: str) -> str:
         """Extract quantization type from filename."""
@@ -529,11 +629,11 @@ class ModelRegistry:
 def download_model(
     repo: str,
     filename: Optional[str] = None,
-    source: str = "auto",
+    source: str = "modelscope",
     output: Optional[Path] = None,
     use_fast: bool = True
 ) -> Path:
-    """Convenience function to download a model."""
+    """Convenience function to download a model. Default source is ModelScope."""
     downloader = ModelDownloader()
     
     source = downloader._detect_source(repo, source)
