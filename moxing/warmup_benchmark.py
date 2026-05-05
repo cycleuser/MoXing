@@ -3,17 +3,20 @@ Warmup benchmark and configuration cache system.
 Based on kaiwu project patterns for zero-configuration optimal performance.
 """
 
-import json
-import os
-import time
 import hashlib
+import json
+import logging
+import os
 import subprocess
+import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, field, asdict
-import httpx
+from typing import List, Optional
 
+import httpx
 from rich.console import Console
+
+logger = logging.getLogger(__name__)
 
 console = Console()
 
@@ -21,6 +24,7 @@ console = Console()
 @dataclass
 class HardwareFingerprint:
     """Hardware fingerprint for cache invalidation."""
+
     gpu_backend: str
     gpu_name: str
     gpu_vram_mb: int
@@ -38,6 +42,7 @@ class HardwareFingerprint:
 @dataclass
 class TunedProfile:
     """Cached tuning profile for a model + hardware combination."""
+
     model_id: str
     hardware_fp: str
     quant: str
@@ -59,7 +64,8 @@ class TunedProfile:
         try:
             expires = time.strptime(self.expires_at, "%Y-%m-%dT%H:%M:%S")
             return time.time() > time.mktime(expires)
-        except Exception:
+        except Exception as e:
+            logger.debug("Profile cache operation failed: %s", e, exc_info=True)
             return True
 
 
@@ -82,13 +88,14 @@ class ProfileCache:
             return None
 
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 data = json.load(f)
             profile = TunedProfile(**data)
             if profile.is_expired():
                 return None
             return profile
-        except Exception:
+        except Exception as e:
+            logger.debug("Profile cache operation failed: %s", e, exc_info=True)
             return None
 
     def save(self, profile: TunedProfile):
@@ -135,6 +142,7 @@ class WarmupBenchmark:
         try:
             arch = extract_model_architecture(self.model_path)
         except Exception as e:
+            logger.debug("Model architecture extraction failed: %s", e, exc_info=True)
             console.print(f"[yellow]Could not extract model architecture: {e}[/yellow]")
             return None
 
@@ -155,7 +163,10 @@ class WarmupBenchmark:
         )
 
         self.cache.save(profile)
-        console.print(f"[green]Profile saved: {profile.measured_tps:.1f} tok/s at ctx={profile.ctx_size}[/green]")
+        console.print(
+            f"[green]Profile saved: {profile.measured_tps:.1f} tok/s "
+            f"at ctx={profile.ctx_size}[/green]"
+        )
 
         return profile
 
@@ -232,6 +243,7 @@ class WarmupBenchmark:
             return tps
 
         except Exception as e:
+            logger.debug("Benchmark measurement failed: %s", e, exc_info=True)
             console.print(f"[yellow]Benchmark failed: {e}[/yellow]")
             return None
 
@@ -239,15 +251,23 @@ class WarmupBenchmark:
         """Build llama-server arguments for benchmarking."""
         args = [
             str(self.binary_path),
-            "-m", str(self.model_path),
-            "--host", "127.0.0.1",
-            "--port", str(self.server_port),
-            "-c", str(ctx_size),
-            "-ngl", "999",
+            "-m",
+            str(self.model_path),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(self.server_port),
+            "-c",
+            str(ctx_size),
+            "-ngl",
+            "999",
             "--metrics",
-            "--ubatch-size", str(ubatch_size),
-            "--batch-size", str(ubatch_size * 4),
-            "--threads", "2",
+            "--ubatch-size",
+            str(ubatch_size),
+            "--batch-size",
+            str(ubatch_size * 4),
+            "--threads",
+            "2",
             "--cont-batching",
         ]
 
@@ -269,7 +289,8 @@ class WarmupBenchmark:
                 resp = httpx.get(f"http://127.0.0.1:{self.server_port}/health", timeout=3)
                 if resp.status_code == 200:
                     return
-            except Exception:
+            except Exception as e:
+                logger.debug("Server health check failed: %s", e, exc_info=True)
                 pass
             time.sleep(0.5)
         raise TimeoutError("Server did not start within timeout")
@@ -302,7 +323,8 @@ class WarmupBenchmark:
 
             return None
 
-        except Exception:
+        except Exception as e:
+            logger.debug("Metrics parsing failed: %s", e, exc_info=True)
             return None
 
     def _parse_metrics_tps(self, metrics_text: str) -> Optional[float]:

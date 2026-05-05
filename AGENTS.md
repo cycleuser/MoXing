@@ -13,13 +13,22 @@ pip install -e ".[dev]"        # Install with dev dependencies
 pip install -e ".[all]"        # Install with all optional dependencies
 ```
 
+### Linting & Type Checking
+
+```bash
+ruff check moxing/              # Lint check
+ruff check --fix moxing/        # Auto-fix lint issues
+ruff format moxing/             # Format code
+ruff format --check moxing/     # Check formatting (CI)
+mypy moxing/                    # Type check
+```
+
 ### Running Tests
 
 ```bash
 pytest                          # Run all tests
 pytest -v                       # Verbose output
 pytest tests/test_device.py     # Run specific file
-pytest tests/test_device.py::TestDeviceDetector::test_detect  # Run single test
 pytest -x --tb=short            # Stop on first failure, short traceback
 ```
 
@@ -164,7 +173,17 @@ class Device:
 ```
 moxing/
     __init__.py          # Public API exports
-    cli.py               # Typer CLI commands
+    cli/                 # CLI commands (split from original cli.py)
+        __init__.py      # Main app with all commands registered
+        serve.py         # serve, run, chat commands
+        download.py      # download, models commands
+        devices.py       # devices command
+        benchmark.py     # bench, speed, info, check, tune, config
+        system.py        # build, diagnose, cache, version, extract-mmproj
+        ollama_cmds.py   # ollama sub-group commands
+        compress.py      # compress sub-group commands
+        turboquant.py    # turboquant sub-group commands
+        monitor.py       # monitor sub-group commands
     client.py            # OpenAI-compatible client
     server.py            # LlamaServer management
     device.py            # GPU detection and configuration
@@ -174,13 +193,20 @@ moxing/
     binaries.py          # Binary management (multi-source download)
     gguf_compress.py     # GGUF compression/transparency
     gguf_check.py        # GGUF compatibility checking
-    ollama.py            # Ollama integration
+    ollama.py            # Ollama integration (client, model listing)
+    ollama_runner.py     # Ollama server management (run, serve)
     mlx_server.py        # MLX backend (macOS)
+    monitor.py           # Web dashboard monitoring
+    enhanced_monitor.py  # System resource monitoring with history
+    runners/             # Backend runner implementations
+    gguf_tools/          # GGUF utility tools
     bin/                 # Pre-built binaries (development only)
+    py.typed             # PEP 561 type marker
 
 scripts/
     build_platform_wheels.py
     upload_to_modelscope.py
+    install.sh / install.ps1
 ```
 
 ## Key Patterns

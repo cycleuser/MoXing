@@ -8,19 +8,18 @@ MoXing 监控仪表板
 - 请求统计
 """
 
-import os
-import json
+import logging
+import subprocess
 import time
-import asyncio
-import threading
-from pathlib import Path
-from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 from datetime import datetime
-import subprocess
+from pathlib import Path
+from typing import Dict, List, Optional
 
 import httpx
 from rich.console import Console
+
+logger = logging.getLogger(__name__)
 
 console = Console()
 
@@ -28,6 +27,7 @@ console = Console()
 @dataclass
 class ServerMetrics:
     """服务器指标"""
+
     prompt_tokens_total: int = 0
     tokens_predicted_total: int = 0
     prompt_seconds_total: float = 0.0
@@ -44,6 +44,7 @@ class ServerMetrics:
 @dataclass
 class MemoryInfo:
     """内存信息"""
+
     gpu_total_mb: float = 0
     gpu_used_mb: float = 0
     gpu_free_mb: float = 0
@@ -58,6 +59,7 @@ class MemoryInfo:
 @dataclass
 class GPUInfo:
     """GPU 信息"""
+
     name: str = ""
     utilization_percent: float = 0
     memory_percent: float = 0
@@ -67,61 +69,77 @@ class GPUInfo:
 
 class MetricsCollector:
     """指标收集器"""
-    
+
     def __init__(self, host: str = "127.0.0.1", port: int = 8080):
         self.host = host
         self.port = port
         self.base_url = f"http://{host}:{port}"
-        
+
         self._last_metrics: Optional[ServerMetrics] = None
         self._metrics_history: List[ServerMetrics] = []
         self._max_history = 100
-        
+
         self._last_prompt_tokens = 0
         self._last_predicted_tokens = 0
-    
+
     def fetch_metrics(self) -> Optional[ServerMetrics]:
         """获取 Prometheus 格式的指标"""
         try:
             r = httpx.get(f"{self.base_url}/metrics", timeout=5)
             if r.status_code != 200:
                 return None
-            
+
             metrics = self._parse_prometheus_metrics(r.text)
-            
+
             if self._last_metrics:
                 metrics.prompt_tokens_per_second = (
-                    (metrics.prompt_tokens_total - self._last_prompt_tokens) /
-                    max(0.001, metrics.prompt_seconds_total - self._last_metrics.prompt_seconds_total)
-                ) if metrics.prompt_seconds_total > self._last_metrics.prompt_seconds_total else 0
-                
+                    (
+                        (metrics.prompt_tokens_total - self._last_prompt_tokens)
+                        / max(
+                            0.001,
+                            metrics.prompt_seconds_total - self._last_metrics.prompt_seconds_total,
+                        )
+                    )
+                    if metrics.prompt_seconds_total > self._last_metrics.prompt_seconds_total
+                    else 0
+                )
+
                 metrics.predicted_tokens_per_second = (
-                    (metrics.tokens_predicted_total - self._last_predicted_tokens) /
-                    max(0.001, metrics.predicted_seconds_total - self._last_metrics.predicted_seconds_total)
-                ) if metrics.predicted_seconds_total > self._last_metrics.predicted_seconds_total else 0
-            
+                    (
+                        (metrics.tokens_predicted_total - self._last_predicted_tokens)
+                        / max(
+                            0.001,
+                            metrics.predicted_seconds_total
+                            - self._last_metrics.predicted_seconds_total,
+                        )
+                    )
+                    if metrics.predicted_seconds_total > self._last_metrics.predicted_seconds_total
+                    else 0
+                )
+
             self._last_prompt_tokens = metrics.prompt_tokens_total
             self._last_predicted_tokens = metrics.tokens_predicted_total
             self._last_metrics = metrics
-            
+
             self._metrics_history.append(metrics)
             if len(self._metrics_history) > self._max_history:
                 self._metrics_history.pop(0)
-            
+
             return metrics
-            
+
         except Exception as e:
+            logger.debug("Metrics parsing failed: %s", e, exc_info=True)
             console.print(f"[red]Failed to fetch metrics: {e}[/red]")
             return None
-    
+
     def _parse_prometheus_metrics(self, text: str) -> ServerMetrics:
         """解析 Prometheus 格式的指标"""
         metrics = ServerMetrics()
-        
+
         for line in text.split("\n"):
             if line.startswith("#") or not line.strip():
                 continue
-            
+
             try:
                 if "llamacpp:prompt_tokens_total" in line:
                     metrics.prompt_tokens_total = int(float(line.split()[-1]))
@@ -143,59 +161,61 @@ class MetricsCollector:
                     metrics.n_decode_total = int(float(line.split()[-1]))
                 elif "llamacpp:n_tokens_max" in line:
                     metrics.n_tokens_max = int(float(line.split()[-1]))
-            except:
+            except:  # noqa: E722
                 pass
-        
+
         return metrics
-    
+
     def fetch_slots(self) -> Optional[List[Dict]]:
         """获取槽位信息"""
         try:
             r = httpx.get(f"{self.base_url}/slots", timeout=5)
             if r.status_code == 200:
                 return r.json()
-        except:
+        except:  # noqa: E722
             pass
         return None
-    
+
     def fetch_props(self) -> Optional[Dict]:
         """获取模型属性"""
         try:
             r = httpx.get(f"{self.base_url}/props", timeout=5)
             if r.status_code == 200:
                 return r.json()
-        except:
+        except:  # noqa: E722
             pass
         return None
-    
+
     def get_memory_info(self, pid: Optional[int] = None) -> MemoryInfo:
         """获取内存信息"""
         import psutil
-        
+
         info = MemoryInfo()
-        
+
         info.ram_total_mb = psutil.virtual_memory().total / (1024 * 1024)
         info.ram_used_mb = psutil.virtual_memory().used / (1024 * 1024)
         info.ram_free_mb = psutil.virtual_memory().available / (1024 * 1024)
-        
+
         if pid:
             try:
                 process = psutil.Process(pid)
                 info.gpu_used_mb = process.memory_info().rss / (1024 * 1024)
-            except:
+            except:  # noqa: E722
                 pass
-        
+
         return info
-    
+
     def get_gpu_info(self) -> Optional[GPUInfo]:
         """获取 GPU 信息"""
         import platform
-        
+
         if platform.system() == "Darwin":
             try:
                 result = subprocess.run(
                     ["system_profiler", "SPDisplaysDataType"],
-                    capture_output=True, text=True, timeout=5
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 if result.returncode == 0:
                     info = GPUInfo()
@@ -208,15 +228,20 @@ class MetricsCollector:
                             if "GB" in vram_str:
                                 info.memory_percent = float(vram_str.replace("GB", "").strip())
                     return info
-            except:
+            except:  # noqa: E722
                 pass
-        
+
         elif platform.system() == "Linux":
             try:
                 result = subprocess.run(
-                    ["nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
-                     "--format=csv,noheader,nounits"],
-                    capture_output=True, text=True, timeout=5
+                    [
+                        "nvidia-smi",
+                        "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
+                        "--format=csv,noheader,nounits",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 if result.returncode == 0:
                     parts = result.stdout.strip().split(", ")
@@ -228,9 +253,9 @@ class MetricsCollector:
                         info.temperature_c = float(parts[4])
                         info.power_w = float(parts[5])
                         return info
-            except:
+            except:  # noqa: E722
                 pass
-        
+
         return None
 
 
@@ -381,12 +406,12 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
     <div class="container">
         <h1>🚀 MoXing Monitor</h1>
-        
+
         <div class="model-info">
             <div class="model-name" id="modelName">Loading...</div>
             <div id="modelDetails" style="color: #888; margin-top: 5px;"></div>
         </div>
-        
+
         <div class="grid">
             <div class="card">
                 <h2>💾 Memory</h2>
@@ -409,7 +434,7 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
                     <span class="metric-value blue" id="kvCache">-- MB</span>
                 </div>
             </div>
-            
+
             <div class="card">
                 <h2>🎮 GPU</h2>
                 <div class="metric">
@@ -432,7 +457,7 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
                     <span class="metric-value" id="gpuPower">-- W</span>
                 </div>
             </div>
-            
+
             <div class="card">
                 <h2>⚡ Performance</h2>
                 <div class="metric">
@@ -453,7 +478,7 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
                 </div>
             </div>
         </div>
-        
+
         <div class="card">
             <h2>📊 Tokens Statistics</h2>
             <div class="tokens-display">
@@ -475,7 +500,7 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
                 </div>
             </div>
         </div>
-        
+
         <div class="card">
             <h2>🔄 Slots Status</h2>
             <div class="slots-grid" id="slotsGrid">
@@ -485,19 +510,19 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
                 </div>
             </div>
         </div>
-        
+
         <div class="refresh-info">
-            Last update: <span id="lastUpdate">--</span> | 
-            Refresh interval: 1s | 
+            Last update: <span id="lastUpdate">--</span> |
+            Refresh interval: 1s |
             <a href="/v1/models" target="_blank" style="color: #00d2ff">API Docs</a>
         </div>
     </div>
-    
+
     <script>
         let lastPromptTokens = 0;
         let lastPredictedTokens = 0;
         let lastTime = Date.now();
-        
+
         async function fetchMetrics() {
             try {
                 const response = await fetch('/metrics');
@@ -507,11 +532,11 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
                 console.error('Failed to fetch metrics:', e);
             }
         }
-        
+
         function parseMetrics(text) {
             const lines = text.split('\\n');
             const metrics = {};
-            
+
             lines.forEach(line => {
                 if (line.startsWith('#') || !line.trim()) return;
                 const parts = line.split(' ');
@@ -520,42 +545,46 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
                     metrics[name] = parseFloat(parts[1]);
                 }
             });
-            
+
             updateDisplay(metrics);
         }
-        
+
         function updateDisplay(metrics) {
             const now = Date.now();
             const dt = (now - lastTime) / 1000;
             lastTime = now;
-            
+
             // Tokens
             const promptTokens = Math.round(metrics['prompt_tokens_total'] || 0);
             const predictedTokens = Math.round(metrics['tokens_predicted_total'] || 0);
             const totalTokens = promptTokens + predictedTokens;
-            
+
             document.getElementById('promptTokens').textContent = promptTokens.toLocaleString();
-            document.getElementById('predictedTokens').textContent = predictedTokens.toLocaleString();
+            document.getElementById('predictedTokens').textContent = (
+                predictedTokens.toLocaleString());
             document.getElementById('totalTokens').textContent = totalTokens.toLocaleString();
-            document.getElementById('maxTokens').textContent = Math.round(metrics['n_tokens_max'] || 0);
-            
+            document.getElementById('maxTokens').textContent = (
+                Math.round(metrics['n_tokens_max'] || 0));
+
             // Speed
             const promptSpeed = metrics['prompt_tokens_seconds'] || 0;
             const genSpeed = metrics['predicted_tokens_seconds'] || 0;
-            const avgSpeed = promptSpeed > 0 && genSpeed > 0 ? 
-                ((promptSpeed + genSpeed) / 2).toFixed(1) : Math.max(promptSpeed, genSpeed).toFixed(1);
-            
+            const avgSpeed = promptSpeed > 0 && genSpeed > 0
+                ? ((promptSpeed + genSpeed) / 2).toFixed(1)
+                : Math.max(promptSpeed, genSpeed).toFixed(1);
+
             document.getElementById('promptSpeed').textContent = promptSpeed.toFixed(1) + ' tok/s';
             document.getElementById('genSpeed').textContent = genSpeed.toFixed(1) + ' tok/s';
             document.getElementById('avgSpeed').textContent = avgSpeed + ' tok/s';
-            
+
             // Decode
-            document.getElementById('decodeCalls').textContent = Math.round(metrics['n_decode_total'] || 0);
-            
+            document.getElementById('decodeCalls').textContent = (
+                Math.round(metrics['n_decode_total'] || 0));
+
             // Update time
             document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
         }
-        
+
         async function fetchSlots() {
             try {
                 const response = await fetch('/slots');
@@ -565,7 +594,7 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
                 console.error('Failed to fetch slots:', e);
             }
         }
-        
+
         function updateSlots(slots) {
             const grid = document.getElementById('slotsGrid');
             grid.innerHTML = slots.map(slot => {
@@ -573,7 +602,7 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
                 const statusClass = isActive ? 'active' : 'idle';
                 const statusText = isActive ? 'Processing' : 'Idle';
                 const tokens = slot.next_token?.[0]?.n_decoded || 0;
-                
+
                 return `
                     <div class="slot ${statusClass}">
                         <span class="status-dot ${statusClass}"></span>
@@ -585,7 +614,7 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
                 `;
             }).join('');
         }
-        
+
         async function fetchProps() {
             try {
                 const response = await fetch('/props');
@@ -595,16 +624,17 @@ MONITOR_HTML_TEMPLATE = """<!DOCTYPE html>
                 console.error('Failed to fetch props:', e);
             }
         }
-        
+
         function updateProps(props) {
-            document.getElementById('modelName').textContent = props.model_path?.split('/').pop() || 'Unknown';
-            document.getElementById('modelDetails').textContent = 
+            document.getElementById('modelName').textContent = (
+                props.model_path?.split('/').pop() || 'Unknown');
+            document.getElementById('modelDetails').textContent =
                 `Context: ${props.n_ctx || '--'} | Batch: ${props.n_batch || '--'}`;
         }
-        
+
         // Initial load
         fetchProps();
-        
+
         // Refresh loop
         setInterval(() => {
             fetchMetrics();
@@ -620,32 +650,33 @@ def create_monitor_page(output_path: Optional[Path] = None) -> Path:
     """创建监控页面"""
     if output_path is None:
         output_path = Path("/tmp/moxing_monitor.html")
-    
+
     output_path.write_text(MONITOR_HTML_TEMPLATE)
     return output_path
 
 
-def start_monitor_server(host: str = "127.0.0.1", port: int = 8080, 
-                         llama_port: int = 8080, metrics_port: int = 9090):
+def start_monitor_server(
+    host: str = "127.0.0.1", port: int = 8080, llama_port: int = 8080, metrics_port: int = 9090
+):
     """启动独立的监控服务器"""
     import http.server
     import socketserver
-    from urllib.parse import urlparse, parse_qs
-    
+    from urllib.parse import urlparse
+
     class MonitorHandler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             self.llama_url = f"http://127.0.0.1:{llama_port}"
             super().__init__(*args, **kwargs)
-        
+
         def do_GET(self):
             parsed = urlparse(self.path)
-            
+
             if parsed.path == "/" or parsed.path == "/index.html":
                 self.send_response(200)
                 self.send_header("Content-type", "text/html")
                 self.end_headers()
                 self.wfile.write(MONITOR_HTML_TEMPLATE.encode())
-            
+
             elif parsed.path == "/metrics":
                 try:
                     resp = httpx.get(f"{self.llama_url}/metrics", timeout=5)
@@ -654,10 +685,11 @@ def start_monitor_server(host: str = "127.0.0.1", port: int = 8080,
                     self.end_headers()
                     self.wfile.write(resp.content)
                 except Exception as e:
+                    logger.debug("Metrics parsing failed: %s", e, exc_info=True)
                     self.send_response(500)
                     self.end_headers()
                     self.wfile.write(f"Error: {e}".encode())
-            
+
             elif parsed.path == "/slots":
                 try:
                     resp = httpx.get(f"{self.llama_url}/slots", timeout=5)
@@ -666,10 +698,11 @@ def start_monitor_server(host: str = "127.0.0.1", port: int = 8080,
                     self.end_headers()
                     self.wfile.write(resp.content)
                 except Exception as e:
+                    logger.debug("Metrics parsing failed: %s", e, exc_info=True)
                     self.send_response(500)
                     self.end_headers()
                     self.wfile.write(f"{{'error': '{e}'}}".encode())
-            
+
             elif parsed.path == "/props":
                 try:
                     resp = httpx.get(f"{self.llama_url}/props", timeout=5)
@@ -678,20 +711,21 @@ def start_monitor_server(host: str = "127.0.0.1", port: int = 8080,
                     self.end_headers()
                     self.wfile.write(resp.content)
                 except Exception as e:
+                    logger.debug("Model props fetch failed: %s", e, exc_info=True)
                     self.send_response(500)
                     self.end_headers()
                     self.wfile.write(f"{{'error': '{e}'}}".encode())
-            
+
             else:
                 self.send_response(404)
                 self.end_headers()
-        
+
         def log_message(self, format, *args):
             pass
-    
+
     console.print(f"[green]Starting monitor server at http://{host}:{port}[/green]")
     console.print(f"[dim]Proxying to llama.cpp at http://127.0.0.1:{llama_port}[/dim]")
-    
+
     with socketserver.TCPServer((host, port), MonitorHandler) as httpd:
         try:
             httpd.serve_forever()
@@ -701,66 +735,64 @@ def start_monitor_server(host: str = "127.0.0.1", port: int = 8080,
 
 def print_live_metrics(host: str = "127.0.0.1", port: int = 8080):
     """打印实时指标到终端"""
-    from rich.table import Table
+    from rich.layout import Layout
     from rich.live import Live
     from rich.panel import Panel
-    from rich.layout import Layout
-    
+    from rich.table import Table
+
     collector = MetricsCollector(host, port)
-    
+
     def generate_display():
         metrics = collector.fetch_metrics()
         slots = collector.fetch_slots()
         props = collector.fetch_props()
-        
-        layout = Layout()
-        
+
+        Layout()
+
         # 模型信息
         if props:
             model_name = Path(props.get("model_path", "Unknown")).name
             model_info = f"[cyan]{model_name}[/cyan] | Context: {props.get('n_ctx', '--')}"
         else:
             model_info = "[red]Not connected[/red]"
-        
+
         # Token 统计表
         table = Table(title="Token Statistics", show_header=True)
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green")
-        
+
         if metrics:
             table.add_row("Prompt Tokens", f"{metrics.prompt_tokens_total:,}")
             table.add_row("Generated Tokens", f"{metrics.tokens_predicted_total:,}")
-            table.add_row("Total Tokens", f"{metrics.prompt_tokens_total + metrics.tokens_predicted_total:,}")
+            table.add_row(
+                "Total Tokens", f"{metrics.prompt_tokens_total + metrics.tokens_predicted_total:,}"
+            )
             table.add_row("Prompt Speed", f"{metrics.prompt_tokens_per_second:.1f} tok/s")
             table.add_row("Generate Speed", f"{metrics.predicted_tokens_per_second:.1f} tok/s")
             table.add_row("Requests Processing", str(metrics.requests_processing))
         else:
             table.add_row("Status", "[red]Failed to connect[/red]")
-        
+
         # Slots 状态
         slots_table = Table(title="Slots", show_header=True)
         slots_table.add_column("ID", style="cyan")
         slots_table.add_column("Status", style="green")
         slots_table.add_column("Context", style="yellow")
-        
+
         if slots:
             for slot in slots:
-                status = "[green]Processing[/green]" if slot.get("is_processing") else "[dim]Idle[/dim]"
-                slots_table.add_row(
-                    str(slot.get("id", "?")),
-                    status,
-                    str(slot.get("n_ctx", "--"))
+                status = (
+                    "[green]Processing[/green]" if slot.get("is_processing") else "[dim]Idle[/dim]"
                 )
-        
+                slots_table.add_row(str(slot.get("id", "?")), status, str(slot.get("n_ctx", "--")))
+
         return Panel(
-            f"{model_info}\n\n{table}\n\n{slots_table}",
-            title="MoXing Monitor",
-            border_style="blue"
+            f"{model_info}\n\n{table}\n\n{slots_table}", title="MoXing Monitor", border_style="blue"
         )
-    
+
     console.print("[blue]Starting live metrics display...[/blue]")
     console.print("[dim]Press Ctrl+C to stop[/dim]\n")
-    
+
     try:
         with Live(generate_display(), refresh_per_second=1) as live:
             while True:
@@ -772,15 +804,15 @@ def print_live_metrics(host: str = "127.0.0.1", port: int = 8080):
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="MoXing Monitor")
     parser.add_argument("--host", default="127.0.0.1", help="Monitor host")
     parser.add_argument("--port", type=int, default=9090, help="Monitor port")
     parser.add_argument("--llama-port", type=int, default=8080, help="llama.cpp server port")
     parser.add_argument("--mode", choices=["server", "cli"], default="cli", help="Run mode")
-    
+
     args = parser.parse_args()
-    
+
     if args.mode == "server":
         start_monitor_server(args.host, args.port, args.llama_port)
     else:

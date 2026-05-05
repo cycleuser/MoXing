@@ -3,11 +3,11 @@ Enhanced GGUF metadata extraction for MoE detection and architecture analysis.
 Based on kaiwu project patterns for performance optimization.
 """
 
+import contextlib
 import struct
-import re
-from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Tuple
 
 GGUF_MAGIC = 0x46554747
 
@@ -29,6 +29,7 @@ GGUF_TYPE_FLOAT64 = 12
 @dataclass
 class ModelArchitecture:
     """Detailed model architecture information extracted from GGUF."""
+
     architecture: str
     is_moe: bool = False
     expert_count: int = 0
@@ -51,7 +52,7 @@ class ModelArchitecture:
 
     @property
     def model_size_gb(self) -> float:
-        return self.file_size_bytes / (1024 ** 3)
+        return self.file_size_bytes / (1024**3)
 
     @property
     def is_qwen3_moe(self) -> bool:
@@ -65,6 +66,7 @@ class ModelArchitecture:
 @dataclass
 class GGUFReader:
     """Low-level GGUF file reader for metadata extraction."""
+
     path: Path
     _fp: Any = None
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -158,7 +160,7 @@ def extract_model_architecture(path: Path) -> ModelArchitecture:
     metadata = reader.read_metadata()
 
     arch = metadata.get("general.architecture", "unknown")
-    name = metadata.get("general.name", path.stem)
+    metadata.get("general.name", path.stem)
     quant = _get_quantization(metadata)
     file_size = path.stat().st_size
 
@@ -210,13 +212,35 @@ def _get_int(metadata: Dict[str, Any], key: str, default: int = 0) -> int:
 def _get_quantization(metadata: Dict[str, Any]) -> str:
     file_type = metadata.get("general.file_type", 0)
     quant_map = {
-        0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1",
-        6: "Q5_0", 7: "Q5_1", 8: "Q8_0", 9: "Q8_1",
-        10: "Q2_K", 11: "Q3_K_S", 12: "Q3_K_M", 13: "Q3_K_L",
-        14: "Q4_K_S", 15: "Q4_K_M", 16: "Q5_K_S", 17: "Q5_K_M",
-        18: "Q6_K", 19: "Q8_K", 20: "IQ2_XXS", 21: "IQ2_XS",
-        22: "IQ3_XXS", 23: "IQ1_S", 24: "IQ4_NL", 25: "IQ3_S",
-        26: "IQ2_S", 27: "IQ4_XS", 28: "I8", 29: "I16", 30: "I32"
+        0: "F32",
+        1: "F16",
+        2: "Q4_0",
+        3: "Q4_1",
+        6: "Q5_0",
+        7: "Q5_1",
+        8: "Q8_0",
+        9: "Q8_1",
+        10: "Q2_K",
+        11: "Q3_K_S",
+        12: "Q3_K_M",
+        13: "Q3_K_L",
+        14: "Q4_K_S",
+        15: "Q4_K_M",
+        16: "Q5_K_S",
+        17: "Q5_K_M",
+        18: "Q6_K",
+        19: "Q8_K",
+        20: "IQ2_XXS",
+        21: "IQ2_XS",
+        22: "IQ3_XXS",
+        23: "IQ1_S",
+        24: "IQ4_NL",
+        25: "IQ3_S",
+        26: "IQ2_S",
+        27: "IQ4_XS",
+        28: "I8",
+        29: "I16",
+        30: "I32",
     }
     return quant_map.get(file_type, f"Unknown({file_type})")
 
@@ -234,14 +258,13 @@ def _detect_moe(metadata: Dict[str, Any], arch: str) -> Tuple[bool, int, int]:
     ]
 
     for key in moe_indicators:
-        if key in metadata:
-            if "expert_count" in key:
-                try:
-                    expert_count = int(metadata[key])
-                    if expert_count > 0:
-                        is_moe = True
-                except (ValueError, TypeError):
-                    pass
+        if key in metadata and "expert_count" in key:
+            try:
+                expert_count = int(metadata[key])
+                if expert_count > 0:
+                    is_moe = True
+            except (ValueError, TypeError):
+                pass
 
     if "moe" in arch.lower():
         is_moe = True
@@ -254,10 +277,8 @@ def _detect_moe(metadata: Dict[str, Any], arch: str) -> Tuple[bool, int, int]:
 
     for key in expert_used_keys:
         if key in metadata:
-            try:
+            with contextlib.suppress(ValueError, TypeError):
                 expert_used_count = int(metadata[key])
-            except (ValueError, TypeError):
-                pass
 
     if is_moe and expert_used_count == 0:
         if "qwen3" in arch and expert_count == 128:
@@ -304,13 +325,12 @@ def should_use_cpu_moe(arch: ModelArchitecture, force_gpu: bool = False) -> bool
     if arch.expert_count > 0 and arch.expert_count > arch.expert_used_count * 4:
         return True
 
-    if arch.architecture in ("mixtral", "qwen3moe", "deepseek2", "deepseek3"):
-        return True
-
-    return False
+    return arch.architecture in ("mixtral", "qwen3moe", "deepseek2", "deepseek3")
 
 
-def get_optimal_thread_count(arch: ModelArchitecture, cpu_cores: int, use_cpu_moe: bool = False) -> int:
+def get_optimal_thread_count(
+    arch: ModelArchitecture, cpu_cores: int, use_cpu_moe: bool = False
+) -> int:
     """Get optimal thread count based on model architecture."""
     if use_cpu_moe:
         return max(cpu_cores // 2, 4)

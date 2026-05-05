@@ -4,13 +4,15 @@ vLLM installation and dependency management.
 Handles installing vLLM with proper CUDA/ROCm support.
 """
 
-import os
-import sys
+import importlib.util
+import logging
 import subprocess
-from pathlib import Path
+import sys
 from typing import Optional, Tuple
 
 from rich.console import Console
+
+logger = logging.getLogger(__name__)
 
 console = Console()
 
@@ -20,17 +22,14 @@ VLLM_MIN_VERSION = "0.8.0"
 
 def is_vllm_installed() -> bool:
     """Check if vLLM is installed."""
-    try:
-        import vllm
-        return True
-    except ImportError:
-        return False
+    return importlib.util.find_spec("vllm") is not None
 
 
 def get_vllm_version() -> Optional[str]:
     """Get installed vLLM version."""
     try:
         import vllm
+
         return getattr(vllm, "__version__", "unknown")
     except ImportError:
         return None
@@ -62,41 +61,34 @@ def detect_cuda_version() -> Optional[str]:
     """Detect CUDA version from system."""
     try:
         import torch
+
         if torch.version.cuda:
             return torch.version.cuda
     except ImportError:
         pass
 
     try:
-        result = subprocess.run(
-            ["nvcc", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
+        result = subprocess.run(["nvcc", "--version"], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             for line in result.stdout.split("\n"):
                 if "release" in line.lower():
                     parts = line.split("release")
                     if len(parts) > 1:
                         return parts[1].strip().split(",")[0].strip()
-    except Exception:
+    except Exception as e:
+        logger.debug("CUDA version detection failed: %s", e, exc_info=True)
         pass
 
     try:
-        result = subprocess.run(
-            ["nvidia-smi"],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
+        result = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             for line in result.stdout.split("\n"):
                 if "CUDA Version" in line:
                     parts = line.split("CUDA Version:")
                     if len(parts) > 1:
                         return parts[1].strip().split(" ")[0].strip()
-    except Exception:
+    except Exception as e:
+        logger.debug("GPU detection via nvidia-smi failed: %s", e, exc_info=True)
         pass
 
     return None
@@ -110,13 +102,14 @@ def detect_rocm_version() -> Optional[str]:
                 [cmd, "--version"] if cmd == "rocm-smi" else [cmd],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
             if result.returncode == 0:
                 for line in result.stdout.split("\n"):
                     if "ROCm" in line or "Version" in line:
                         return line.strip()
-        except Exception:
+        except Exception as e:
+            logger.debug("ROCm GPU detection via rocm-smi failed: %s", e, exc_info=True)
             pass
     return None
 
@@ -148,12 +141,7 @@ def install_vllm(
         console.print(f"[dim]Command: {' '.join(cmd)}[/dim]")
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=quiet,
-            text=True,
-            timeout=600
-        )
+        result = subprocess.run(cmd, capture_output=quiet, text=True, timeout=600)
 
         if result.returncode == 0:
             if not quiet:
@@ -161,7 +149,7 @@ def install_vllm(
             return True
         else:
             if not quiet:
-                console.print(f"[red]vLLM installation failed:[/red]")
+                console.print("[red]vLLM installation failed:[/red]")
                 if result.stderr:
                     console.print(f"[dim]{result.stderr[-500:]}[/dim]")
             return False
@@ -170,6 +158,7 @@ def install_vllm(
             console.print("[red]vLLM installation timed out (10 min)[/red]")
         return False
     except Exception as e:
+        logger.debug("Operation failed: %s", e, exc_info=True)
         if not quiet:
             console.print(f"[red]vLLM installation error: {e}[/red]")
         return False
@@ -181,18 +170,17 @@ def install_vllm_rocm(quiet: bool = False) -> bool:
         console.print("[blue]Installing vLLM with ROCm support...[/blue]")
 
     cmd = [
-        sys.executable, "-m", "pip", "install",
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
         "vllm",
-        "--extra-index-url", "https://download.pytorch.org/whl/rocm6.2"
+        "--extra-index-url",
+        "https://download.pytorch.org/whl/rocm6.2",
     ]
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=quiet,
-            text=True,
-            timeout=600
-        )
+        result = subprocess.run(cmd, capture_output=quiet, text=True, timeout=600)
 
         if result.returncode == 0:
             if not quiet:
@@ -200,9 +188,10 @@ def install_vllm_rocm(quiet: bool = False) -> bool:
             return True
         else:
             if not quiet:
-                console.print(f"[red]vLLM ROCm installation failed[/red]")
+                console.print("[red]vLLM ROCm installation failed[/red]")
             return False
     except Exception as e:
+        logger.debug("Operation failed: %s", e, exc_info=True)
         if not quiet:
             console.print(f"[red]vLLM ROCm installation error: {e}[/red]")
         return False
@@ -217,10 +206,10 @@ def get_install_recommendation() -> str:
         return "vLLM does not support macOS. Use llama.cpp or MLX backend instead."
 
     if has_cuda:
-        return f"Install vLLM with CUDA: pip install vllm"
+        return "Install vLLM with CUDA: pip install vllm"
 
     if has_rocm:
-        return f"Install vLLM with ROCm: pip install vllm --extra-index-url https://download.pytorch.org/whl/rocm6.2"
+        return "Install vLLM with ROCm: pip install vllm --extra-index-url https://download.pytorch.org/whl/rocm6.2"
 
     return "No GPU detected. vLLM requires CUDA or ROCm. Use llama.cpp CPU backend instead."
 

@@ -10,14 +10,13 @@ Supported runners:
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, List, Dict, Any
-
-from moxing.device import BackendType
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
 class RunnerConfig:
     """Unified configuration for all runners."""
+
     model: str
     runner_type: str = "llama_cpp"
     host: str = "127.0.0.1"
@@ -141,12 +140,15 @@ def get_runner_class(runner_type: str) -> type:
     """Get the runner class for a given runner type."""
     if runner_type == "llama_cpp":
         from moxing.runners.llama_cpp import LlamaCppRunner
+
         return LlamaCppRunner
     elif runner_type == "vllm":
         from moxing.runners.vllm import VLLMRunner
+
         return VLLMRunner
     elif runner_type == "ollama":
         from moxing.runners.ollama import OllamaRunner
+
         return OllamaRunner
     else:
         raise ValueError(f"Unknown runner type: {runner_type}. Supported: llama_cpp, vllm, ollama")
@@ -181,12 +183,14 @@ def detect_best_runner(
             return "llama_cpp"
         if model_path.is_dir():
             from moxing.runners.vllm import VLLMRunner
+
             if VLLMRunner.is_vllm_available():
                 return "vllm"
             return "llama_cpp"
 
     if "/" in model_name and not model_name.endswith(".gguf"):
         from moxing.runners.vllm import VLLMRunner
+
         if VLLMRunner.is_vllm_available():
             return "vllm"
         return "llama_cpp"
