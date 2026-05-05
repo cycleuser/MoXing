@@ -436,6 +436,74 @@ def serve(
                 console.print(f"[dim]{traceback.format_exc()}[/dim]")
                 raise typer.Exit(1) from e
 
+        elif effective_runner == "llama_cpp":
+            runner_config = RunnerConfig(
+                model=model,
+                runner_type="llama_cpp",
+                host=host,
+                port=port,
+                backend=backend,
+                device=device,
+                ctx_size=ctx_size if ctx_size > 0 else 0,
+                n_gpu_layers=ngl,
+                kv_cache_quant=kv_cache,
+                cpu_offload=cpu_offload > 0,
+                cpu_offload_layers=cpu_offload,
+                cpu_moe=cpu_moe,
+                speculative_draft=speculative_draft,
+                speculative_max=speculative_max,
+                speculative_min=speculative_min,
+                speculative_pmin=speculative_pmin,
+                lookahead=lookahead,
+                cache_prompts=cache_prompts,
+                cache_rem=cache_rem,
+                slots=slots,
+                cont_batching=cont_batching,
+                mlock=mlock,
+                no_kv_offload=no_kv_offload,
+                tensor_split=tensor_split,
+                main_gpu=main_gpu,
+                numa=numa,
+                defrag_thold=defrag_thold,
+                rope_scaling=rope_scaling,
+                rope_scale=rope_scale,
+                parallel=parallel,
+                mirostat=mirostat,
+                mirostat_tau=mirostat_tau,
+                mirostat_eta=mirostat_eta,
+                verbose=verbose,
+            )
+
+            server = create_runner(runner_config)
+
+            model_short = Path(model).name[:20] if Path(model).exists() else model[:20]
+            server_title = f"{model_short} | llama.cpp | {backend}"
+
+            console.print(
+                Panel(
+                    f"[green]Server:[/green] http://{host}:{port}\n"
+                    f"[blue]OpenAI API:[/blue] http://{host}:{port}/v1\n"
+                    f"[magenta]Runner:[/magenta] llama.cpp\n"
+                    f"[cyan]Device:[/cyan] {device}\n"
+                    f"[yellow]Press Ctrl+C to stop[/yellow]",
+                    title=server_title,
+                )
+            )
+
+            server.start(wait=False)
+
+            try:
+                serve_with_verbose_monitor(server, verbose=verbose, web_monitor=web_monitor)
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Shutting down...[/yellow]")
+                server.stop()
+            except Exception as e:
+                console.print(f"[red]Error: {e}[/red]")
+                import traceback
+
+                console.print(f"[dim]{traceback.format_exc()}[/dim]")
+                raise typer.Exit(1) from e
+
 
 def run(
     model: str = typer.Argument(..., help="Model name or path"),
