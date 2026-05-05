@@ -10,9 +10,9 @@ Supports:
 from moxing.runners.base import (
     BaseRunner,
     RunnerConfig,
-    get_runner_class,
     create_runner,
     detect_best_runner,
+    get_runner_class,
 )
 
 __all__ = [

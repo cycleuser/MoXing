@@ -2,14 +2,16 @@
 Llama.cpp runner - wraps the existing LlamaServer.
 """
 
-import os
-import sys
+import contextlib
+import logging
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import List, Optional
 
+from moxing.device import BackendType, DeviceDetector
 from moxing.runners.base import BaseRunner, RunnerConfig
 from moxing.server import LlamaServer
-from moxing.device import DeviceDetector, BackendType
+
+logger = logging.getLogger(__name__)
 
 
 class LlamaCppRunner(BaseRunner):
@@ -34,16 +36,19 @@ class LlamaCppRunner(BaseRunner):
     def is_available(self) -> bool:
         try:
             from moxing.binaries import get_binary_manager
+
             manager = get_binary_manager(self.config.backend)
             return manager.has_binaries() or True
-        except Exception:
+        except Exception as e:
+            logger.debug("Binary manager lookup failed: %s", e, exc_info=True)
             return True
 
     def start(self, wait: bool = True, timeout: int = 120) -> "LlamaCppRunner":
         model_path = Path(self.config.model)
 
         if model_path.exists():
-            from moxing.gguf_compress import resolve_model_path, is_gguf_compressed
+            from moxing.gguf_compress import is_gguf_compressed, resolve_model_path
+
             if is_gguf_compressed(model_path):
                 pass
             resolved_path = resolve_model_path(model_path)
@@ -95,7 +100,7 @@ class LlamaCppRunner(BaseRunner):
             cache_reuse=self.config.cache_reuse,
             tune_config=self.config.tune_config,
             verbose=self.config.verbose,
-            **self.config.extra_args
+            **self.config.extra_args,
         )
 
         self._server.start(wait=wait, timeout=timeout)
@@ -126,10 +131,10 @@ class LlamaCppRunner(BaseRunner):
         detector = DeviceDetector()
         devices = detector.detect()
 
-        model_size_gb = 0
+        model_size_gb = 0.0
         model_path = Path(self.config.model)
         if model_path.exists():
-            model_size_gb = model_path.stat().st_size / (1024 ** 3)
+            model_size_gb = model_path.stat().st_size / (1024**3)
 
         backend = self.config.backend
         if backend == "auto":
@@ -153,10 +158,8 @@ class LlamaCppRunner(BaseRunner):
         else:
             device_config = detector.get_best_device(model_size_gb)
             if backend != "auto":
-                try:
+                with contextlib.suppress(ValueError):
                     device_config.backend = BackendType(backend.lower())
-                except ValueError:
-                    pass
 
         n_gpu_layers = self.config.n_gpu_layers
         if n_gpu_layers == -1:

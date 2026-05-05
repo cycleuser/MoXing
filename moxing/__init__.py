@@ -15,15 +15,15 @@ Features:
 
 Quick start:
     from moxing import quick_run, quick_server
-    
+
     # Quick inference
     result = quick_run("llama-3.2-3b", "Write a haiku")
-    
+
     # Start server
     with quick_server("llama-3.2-3b") as server:
         # Use OpenAI API at http://localhost:8080/v1
         pass
-    
+
     # TurboQuant for KV cache compression
     from moxing import TurboQuant, TurboQuantConfig
     tq = TurboQuant(TurboQuantConfig(bits_per_channel=3.5))
@@ -31,45 +31,67 @@ Quick start:
 
 __version__ = "0.1.30"
 
-from moxing.client import Client, ChatCompletion, Message
-from moxing.server import LlamaServer, ServerConfig, GPUInfo
-from moxing.device import (
-    Device, DeviceConfig, DeviceDetector, BackendType,
-    detect_best_backend, get_device_config
-)
-from moxing.models import (
-    ModelDownloader, ModelInfo, ModelRegistry, download_model
-)
-from moxing.runner import (
-    AutoRunner, RunConfig, quick_run, quick_server
-)
 from moxing.binaries import (
-    BinaryManager, get_binary_manager, ensure_binaries, get_server_binary,
-    check_binary_version, get_latest_llama_cpp_version, skip_update_forever,
-    clear_skip_update
+    BinaryManager,
+    check_binary_version,
+    clear_skip_update,
+    ensure_binaries,
+    get_binary_manager,
+    get_latest_llama_cpp_version,
+    get_server_binary,
+    skip_update_forever,
+)
+from moxing.client import ChatCompletion, Client, Message
+from moxing.device import (
+    BackendType,
+    Device,
+    DeviceConfig,
+    DeviceDetector,
+    detect_best_backend,
+    get_device_config,
 )
 from moxing.gguf_compress import (
-    MultiCompressor, TransparentDecompressor, GGUFSplitter,
-    compress_model, resolve_model_path
-)
-from moxing.turboquant import (
-    TurboQuant, TurboQuantConfig, TurboQuantMode,
-    TurboQuantMixedPrecision, LloydMaxQuantizer, QJLQuantizer,
-)
-from moxing.kv_cache import (
-    KVCacheQuantType, KVCacheConfig,
-    estimate_kv_cache_size, estimate_kv_cache_size_gb,
-    recommend_cache_config, get_llama_cpp_cache_args,
+    GGUFSplitter,
+    MultiCompressor,
+    TransparentDecompressor,
+    compress_model,
+    resolve_model_path,
 )
 from moxing.gguf_metadata import (
-    ModelArchitecture, extract_model_architecture, should_use_cpu_moe,
+    ModelArchitecture,
+    extract_model_architecture,
+    should_use_cpu_moe,
+)
+from moxing.kv_cache import (
+    KVCacheConfig,
+    KVCacheQuantType,
+    estimate_kv_cache_size,
+    estimate_kv_cache_size_gb,
+    get_llama_cpp_cache_args,
+    recommend_cache_config,
 )
 from moxing.kv_cache_selector import (
-    KVCacheSelection, select_kv_cache_type, calculate_kv_cache_vram_mb,
+    KVCacheSelection,
+    calculate_kv_cache_vram_mb,
     estimate_context_from_vram,
+    select_kv_cache_type,
+)
+from moxing.models import ModelDownloader, ModelInfo, ModelRegistry, download_model
+from moxing.runner import AutoRunner, RunConfig, quick_run, quick_server
+from moxing.server import GPUInfo, LlamaServer, ServerConfig
+from moxing.turboquant import (
+    LloydMaxQuantizer,
+    QJLQuantizer,
+    TurboQuant,
+    TurboQuantConfig,
+    TurboQuantMixedPrecision,
+    TurboQuantMode,
 )
 from moxing.warmup_benchmark import (
-    WarmupBenchmark, ProfileCache, HardwareFingerprint, TunedProfile,
+    HardwareFingerprint,
+    ProfileCache,
+    TunedProfile,
+    WarmupBenchmark,
     get_hardware_fingerprint,
 )
 
@@ -80,32 +102,27 @@ __all__ = [
     "Client",
     "ChatCompletion",
     "Message",
-    
     # Server
     "LlamaServer",
     "ServerConfig",
     "GPUInfo",
-    
     # Device
     "Device",
-    "DeviceConfig", 
+    "DeviceConfig",
     "DeviceDetector",
     "BackendType",
     "detect_best_backend",
     "get_device_config",
-    
     # Models
     "ModelDownloader",
     "ModelInfo",
     "ModelRegistry",
     "download_model",
-    
     # Runner
     "AutoRunner",
     "RunConfig",
     "quick_run",
     "quick_server",
-    
     # Binaries
     "BinaryManager",
     "get_binary_manager",
@@ -115,7 +132,6 @@ __all__ = [
     "get_latest_llama_cpp_version",
     "skip_update_forever",
     "clear_skip_update",
-    
     # Compression
     "GGUFCompressor",
     "MultiCompressor",
@@ -123,7 +139,6 @@ __all__ = [
     "GGUFSplitter",
     "compress_model",
     "resolve_model_path",
-    
     # TurboQuant
     "TurboQuant",
     "TurboQuantConfig",
@@ -131,7 +146,6 @@ __all__ = [
     "TurboQuantMixedPrecision",
     "LloydMaxQuantizer",
     "QJLQuantizer",
-    
     # KV Cache
     "KVCacheQuantType",
     "KVCacheConfig",
@@ -139,18 +153,15 @@ __all__ = [
     "estimate_kv_cache_size_gb",
     "recommend_cache_config",
     "get_llama_cpp_cache_args",
-    
     # GGUF Metadata
     "ModelArchitecture",
     "extract_model_architecture",
     "should_use_cpu_moe",
-    
     # KV Cache Selector
     "KVCacheSelection",
     "select_kv_cache_type",
     "calculate_kv_cache_vram_mb",
     "estimate_context_from_vram",
-    
     # Warmup Benchmark
     "WarmupBenchmark",
     "ProfileCache",

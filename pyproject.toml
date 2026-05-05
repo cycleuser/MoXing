@@ -7,7 +7,8 @@ name = "moxing"
 dynamic = ["version"]
 description = "Python wrapper for llama.cpp - OpenAI API compatible LLM backend with auto GPU detection"
 readme = "README.md"
-license = "MIT"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
 requires-python = ">=3.8"
 authors = [
     { name = "MoXing Contributors" },
@@ -44,6 +45,8 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "build>=1.0.0",
     "twine>=4.0.0",
+    "ruff>=0.9.0",
+    "mypy>=1.14.0",
 ]
 openai = ["openai>=1.0.0"]
 hf = ["huggingface_hub>=0.20.0"]
@@ -78,10 +81,42 @@ version = { attr = "moxing.__version__" }
 include = ["moxing*"]
 
 [tool.setuptools.package-data]
-moxing = []
+moxing = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+[tool.ruff]
+target-version = "py38"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM", "C4"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["moxing"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.9"
+strict = false
+follow_imports = "skip"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = [
+    "typer",
+    "psutil",
+    "huggingface_hub", "modelscope", "modelscope.hub.*",
+    "scipy", "scipy.integrate", "scipy.special",
+    "vllm",
+]
+ignore_missing_imports = true

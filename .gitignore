@@ -258,7 +258,6 @@ src/
 tools/
 vendor/
 examples/
-tests/
 pocs/
 common/
 llama_ollama/
@@ -267,6 +266,8 @@ CMakeCache.txt
 /build_log.txt
 /package_binaries.sh
 /bin/
+/data/
+/logs/
 BENCHMARK_*.md
 OLLAMA_*.md
 IMPLEMENTATION_*.md

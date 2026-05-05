@@ -9,18 +9,21 @@ Supports:
 - Prefix caching, speculative decoding
 """
 
+import logging
 import os
-import sys
-import time
 import subprocess
+import sys
 import threading
+import time
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Dict, List, Optional
 
 from rich.console import Console
 
 from moxing.runners.base import BaseRunner, RunnerConfig
-from moxing.vllm_installer import is_vllm_installed, ensure_vllm
+from moxing.vllm_installer import ensure_vllm, is_vllm_installed
+
+logger = logging.getLogger(__name__)
 
 console = Console()
 
@@ -57,9 +60,7 @@ class VLLMRunner(BaseRunner):
         if not self.is_vllm_available():
             console.print("[yellow]vLLM not installed, attempting to install...[/yellow]")
             if not ensure_vllm():
-                raise RuntimeError(
-                    "vLLM is not installed. Install: pip install vllm"
-                )
+                raise RuntimeError("vLLM is not installed. Install: pip install vllm")
 
         args = self._build_args()
         env = self._prepare_env()
@@ -67,13 +68,16 @@ class VLLMRunner(BaseRunner):
         model = self.config.model
 
         if self.config.verbose:
-            console.print(f"[blue]Starting vLLM server...[/blue]")
+            console.print("[blue]Starting vLLM server...[/blue]")
             console.print(f"[dim]Model: {model}[/dim]")
             console.print(f"[dim]Args: {' '.join(args)}[/dim]")
 
         cmd = [
-            sys.executable, "-m", "vllm.entrypoints.openai.api_server",
-            "--model", model,
+            sys.executable,
+            "-m",
+            "vllm.entrypoints.openai.api_server",
+            "--model",
+            model,
         ] + args
 
         try:
@@ -84,7 +88,8 @@ class VLLMRunner(BaseRunner):
                 env=env,
             )
         except Exception as e:
-            raise RuntimeError(f"Failed to start vLLM server: {e}")
+            logger.debug("Subprocess operation failed: %s", e, exc_info=True)
+            raise RuntimeError(f"Failed to start vLLM server: {e}") from e
 
         if wait:
             self._wait_for_server(timeout)
@@ -92,7 +97,7 @@ class VLLMRunner(BaseRunner):
             time.sleep(5)
             if self._process.poll() is not None:
                 stdout, _ = self._process.communicate()
-                console.print(f"\n[red bold]vLLM server failed to start![/red bold]")
+                console.print("\n[red bold]vLLM server failed to start![/red bold]")
                 console.print(f"[dim]Exit code: {self._process.returncode}[/dim]")
                 if stdout:
                     for line in stdout.decode("utf-8", errors="replace").strip().split("\n")[-20:]:
@@ -151,8 +156,10 @@ class VLLMRunner(BaseRunner):
         if self.config.gpu_memory_utilization != 0.9:
             args.extend(["--gpu-memory-utilization", str(self.config.gpu_memory_utilization)])
 
-        max_len = self.config.max_model_len if self.config.max_model_len > 0 else (
-            self.config.ctx_size if self.config.ctx_size > 0 else 0
+        max_len = (
+            self.config.max_model_len
+            if self.config.max_model_len > 0
+            else (self.config.ctx_size if self.config.ctx_size > 0 else 0)
         )
         if max_len > 0:
             args.extend(["--max-model-len", str(max_len)])
@@ -176,7 +183,9 @@ class VLLMRunner(BaseRunner):
             args.extend(["--attention-backend", self.config.attention_backend])
 
         if self.config.distributed_executor_backend != "auto":
-            args.extend(["--distributed-executor-backend", self.config.distributed_executor_backend])
+            args.extend(
+                ["--distributed-executor-backend", self.config.distributed_executor_backend]
+            )
 
         if self.config.speculative_draft:
             args.extend(["--speculative-model", self.config.speculative_draft])
@@ -199,6 +208,7 @@ class VLLMRunner(BaseRunner):
             if "HSA_OVERRIDE_GFX_VERSION" not in env:
                 env["HSA_OVERRIDE_GFX_VERSION"] = "11.0.0"
             import glob
+
             rocm_paths = ["/opt/rocm/lib", "/opt/rocm/core/lib"]
             rocm_paths.extend(glob.glob("/opt/rocm/core-*/lib"))
             ld_path = env.get("LD_LIBRARY_PATH", "")
@@ -211,7 +221,11 @@ class VLLMRunner(BaseRunner):
         if self.config.device.startswith("gpu"):
             try:
                 gpu_id = self.config.device.replace("gpu", "")
-                key = "HIP_VISIBLE_DEVICES" if self.config.backend == "rocm" else "CUDA_VISIBLE_DEVICES"
+                key = (
+                    "HIP_VISIBLE_DEVICES"
+                    if self.config.backend == "rocm"
+                    else "CUDA_VISIBLE_DEVICES"
+                )
                 env[key] = gpu_id
             except ValueError:
                 pass
@@ -220,16 +234,17 @@ class VLLMRunner(BaseRunner):
 
     def _wait_for_server(self, timeout: int = 180):
         start = time.time()
-        last_log = ""
         while time.time() - start < timeout:
             try:
                 import httpx
+
                 resp = httpx.get(f"{self._base_url}/health", timeout=5)
                 if resp.status_code == 200:
                     console.print(f"[green]vLLM server ready at {self._base_url}[/green]")
                     self._start_monitor()
                     return
-            except Exception:
+            except Exception as e:
+                logger.debug("Server health check failed: %s", e, exc_info=True)
                 pass
 
             if self._process is not None and self._process.poll() is not None:
@@ -250,7 +265,8 @@ class VLLMRunner(BaseRunner):
             try:
                 for _ in stream:
                     pass
-            except Exception:
+            except Exception as e:
+                logger.debug("Stream drain failed: %s", e, exc_info=True)
                 pass
 
         if self._process.stdout:
@@ -260,7 +276,10 @@ class VLLMRunner(BaseRunner):
             while self._process and self._process.poll() is None:
                 time.sleep(0.5)
             if self._process and self._process.poll() is not None:
-                console.print(f"\n[red bold]vLLM server crashed! (exit: {self._process.returncode})[/red bold]")
+                rc = self._process.returncode
+                console.print(
+                    f"\n[red bold]vLLM server crashed! (exit: {rc})[/red bold]"
+                )
 
         self._monitor_thread = threading.Thread(target=monitor, daemon=True)
         self._monitor_thread.start()

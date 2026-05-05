@@ -2,13 +2,13 @@
 Ollama runner - wraps the existing OllamaRunnerServer.
 """
 
-import os
-import sys
-from pathlib import Path
-from typing import Optional, List, Dict, Any
+import logging
+from typing import Any, List, Optional
 
+from moxing.device import DeviceDetector
 from moxing.runners.base import BaseRunner, RunnerConfig
-from moxing.device import DeviceDetector, BackendType
+
+logger = logging.getLogger(__name__)
 
 
 class OllamaRunner(BaseRunner):
@@ -16,7 +16,7 @@ class OllamaRunner(BaseRunner):
 
     def __init__(self, config: RunnerConfig):
         self.config = config
-        self._server = None
+        self._server: Optional[Any] = None
 
     @property
     def name(self) -> str:
@@ -33,9 +33,11 @@ class OllamaRunner(BaseRunner):
     def is_available(self) -> bool:
         try:
             from moxing.ollama import OllamaClient
+
             client = OllamaClient()
-            return client.is_running()
-        except Exception:
+            return client.is_available()
+        except Exception as e:
+            logger.debug("Service availability check failed: %s", e, exc_info=True)
             return False
 
     def start(self, wait: bool = True, timeout: int = 120) -> "OllamaRunner":
@@ -86,7 +88,7 @@ class OllamaRunner(BaseRunner):
             flash_attn=True,
             kv_cache=self.config.kv_cache_quant if self.config.kv_cache_quant != "auto" else "f16",
             n_gpu_layers=self.config.n_gpu_layers,
-            **self.config.extra_args
+            **self.config.extra_args,
         )
 
         if self._server is None:

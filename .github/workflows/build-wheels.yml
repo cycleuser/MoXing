@@ -50,6 +50,28 @@ jobs:
           echo "platforms=$PLATFORMS" >> $GITHUB_OUTPUT
           echo "Platforms: $PLATFORMS"
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install lint tools
+        run: pip install ruff mypy httpx pydantic rich typer psutil
+
+      - name: Ruff check
+        run: ruff check moxing/
+
+      - name: Ruff format check
+        run: ruff format --check moxing/
+
+      - name: Mypy type check
+        run: mypy moxing/
+
   build:
     needs: prepare
     runs-on: ubuntu-latest

@@ -12,7 +12,7 @@ MoXing is a multi-backend LLM inference platform that provides:
 ```
 +---------------------------------------------------------------------+
 |                           CLI Layer                                  |
-|  (cli.py - typer commands: serve, ollama, bench, check, etc.)       |
+|  (cli/ - typer commands: serve, ollama, bench, check, etc.)         |
 +---------------------------------------------------------------------+
                                   |
                                   v
@@ -55,14 +55,19 @@ MoXing is a multi-backend LLM inference platform that provides:
 
 ## Component Details
 
-### 1. CLI Layer (cli.py)
+### 1. CLI Layer (cli/)
 
-Entry point using typer. Main commands:
+Entry point using typer. Split into sub-modules:
 
-- `serve`: Start OpenAI-compatible server
-- `ollama list/serve/info/run`: Ollama integration
-- `check`: GGUF compatibility check
-- `bench/speed`: Performance testing
+- `cli/serve.py`: `serve`, `run`, `chat` commands
+- `cli/download.py`: `download`, `models` commands
+- `cli/devices.py`: `devices` command
+- `cli/benchmark.py`: `bench`, `speed`, `info`, `check`, `tune`, `config`
+- `cli/system.py`: `build`, `diagnose`, `cache`, `version`, `extract-mmproj`
+- `cli/ollama_cmds.py`: Ollama sub-group (list, serve, run, info, tune)
+- `cli/compress.py`: Compress sub-group (pack, unpack, cache, split, merge)
+- `cli/turboquant.py`: TurboQuant sub-group
+- `cli/monitor.py`: Monitor sub-group
 
 ### 2. Backend Router
 
@@ -164,7 +169,7 @@ CRITICAL_KEYS = {
 ## Data Flow: `moxing ollama serve gemma3:4b`
 
 ```
-1. cli.py: ollama_serve("gemma3:4b")
+1. cli/: ollama_serve("gemma3:4b")
    |
 2. ollama.py: OllamaClient.get_model_gguf_path("gemma3:4b")
    |   ├── Find manifest: ~/.ollama/models/manifests/.../gemma3/4b
@@ -177,7 +182,7 @@ CRITICAL_KEYS = {
    |   ├── Check for critical keys
    |   └── Return: compatibility report
    |
-4. cli.py: Display compatibility warnings (if any)
+4. cli/: Display compatibility warnings (if any)
    |
 5. device.py: DeviceDetector.get_best_device(model_size)
    |   ├── Detect GPUs (Metal/CUDA/Vulkan)
@@ -195,18 +200,50 @@ CRITICAL_KEYS = {
 
 ```
 moxing/
-├── __init__.py          # Public API exports
-├── cli.py               # Typer CLI commands
-├── server.py            # LlamaServer class
-├── mlx_server.py        # MLXServer class  
-├── binaries.py          # Binary download/management
-├── device.py            # GPU detection
-├── models.py            # HuggingFace/ModelScope download
-├── ollama.py            # Ollama integration
-├── gguf_check.py        # GGUF compatibility check
-├── runner.py            # AutoRunner helper
-├── client.py            # OpenAI client wrapper
-└── benchmark.py         # Performance testing
+├── __init__.py              # Public API exports
+├── cli/                     # CLI commands (split by command group)
+│   ├── __init__.py          # Main app with all commands registered
+│   ├── serve.py             # serve, run, chat commands
+│   ├── download.py          # download, models commands
+│   ├── devices.py           # devices command
+│   ├── benchmark.py        # bench, speed, info, check, tune, config
+│   ├── system.py            # build, diagnose, cache, version, extract-mmproj
+│   ├── ollama_cmds.py       # ollama sub-group commands
+│   ├── compress.py          # compress sub-group commands
+│   ├── turboquant.py        # turboquant sub-group commands
+│   └── monitor.py           # monitor sub-group commands
+├── client.py                # OpenAI client wrapper
+├── server.py                # LlamaServer class
+├── mlx_server.py            # MLXServer class
+├── binaries.py              # Binary download/management
+├── device.py                # GPU detection
+├── models.py                # HuggingFace/ModelScope download
+├── ollama.py                # Ollama integration (client, model listing)
+├── ollama_runner.py         # Ollama server management
+├── gguf_check.py            # GGUF compatibility check
+├── gguf_compress.py          # GGUF compression/transparency
+├── gguf_metadata.py          # GGUF metadata extraction
+├── kv_cache.py              # KV cache quantization types
+├── kv_cache_selector.py     # KV cache auto-selection
+├── runner.py                # AutoRunner helper
+├── benchmark.py             # Performance testing
+├── monitor.py               # Web dashboard monitoring
+├── enhanced_monitor.py       # System resource monitoring
+├── turboquant.py            # TurboQuant implementation
+├── warmup_benchmark.py      # Warmup benchmark + profile cache
+├── vllm_installer.py        # vLLM installation helper
+├── backend_installer.py     # Post-install binary download
+├── post_install.py          # Post-install hook
+├── runners/                 # Backend runner implementations
+│   ├── base.py              # Abstract BaseRunner
+│   ├── llama_cpp.py         # llama.cpp runner
+│   ├── ollama.py            # Ollama runner
+│   └── vllm.py              # vLLM runner
+├── gguf_tools/              # GGUF utility tools
+│   ├── split_ollama_gguf.py
+│   └── extract_mmproj.py
+├── py.typed                 # PEP 561 type marker
+└── bin/                     # Pre-built binaries (dev only)
 ```
 
 ## Key Design Decisions

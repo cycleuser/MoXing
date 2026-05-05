@@ -4,12 +4,12 @@ Based on kaiwu project patterns for optimal performance.
 """
 
 from dataclasses import dataclass
-from typing import Tuple, Optional
 
 
 @dataclass
 class KVCacheSelection:
     """KV cache type selection result."""
+
     k_type: str
     v_type: str
     reason: str
