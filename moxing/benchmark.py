@@ -105,6 +105,7 @@ class BenchmarkRunner:
         ctx_size: int = 4096,
         n_gpu_layers: int = -1,
         device: str = "auto",
+        backend: str = "auto",
         **kwargs,
     ) -> BenchmarkResult:
         """
@@ -119,6 +120,7 @@ class BenchmarkRunner:
             ctx_size: Context size
             n_gpu_layers: GPU layers (-1 for all)
             device: Device to use
+            backend: Backend to use (cuda, vulkan, rocm, metal, cpu)
 
         Returns:
             BenchmarkResult with performance metrics
@@ -149,6 +151,7 @@ class BenchmarkRunner:
                 ctx_size=ctx_size,
                 n_gpu_layers=n_gpu_layers,
                 device=device,
+                backend=backend,
                 **kwargs,
             )
 
@@ -165,6 +168,7 @@ class BenchmarkRunner:
         ctx_size: int,
         n_gpu_layers: int,
         device: str,
+        backend: str = "auto",
         **kwargs,
     ) -> BenchmarkResult:
         """Run a single benchmark iteration."""
@@ -183,11 +187,13 @@ class BenchmarkRunner:
             ctx_size=ctx_size,
             n_gpu_layers=n_gpu_layers,
             device=device,
+            gpu_backend=backend,
             verbose=self.verbose,
         )
 
         result = BenchmarkResult(
-            model=model_path.name, ctx_size=ctx_size, model_size_gb=model_size_gb
+            model=model_path.name, ctx_size=ctx_size, model_size_gb=model_size_gb,
+            device=device, backend=backend,
         )
 
         start_time = time.time()

@@ -205,6 +205,8 @@ def benchmark(
     n_runs: int = typer.Option(1, "-r", "--runs", help="Number of benchmark runs"),
     warmup: bool = typer.Option(True, "-w", "--warmup", help="Run warmup iteration"),
     ctx_size: int = typer.Option(4096, "-c", "--ctx-size", help="Context size"),
+    device: str = typer.Option("auto", "-d", "--device", help="Device to use (e.g., gpu0, gpu1, cpu)"),
+    backend: str = typer.Option("auto", "-b", "--backend", help="Backend to use (cuda, vulkan, rocm, metal, cpu)"),
     compare: Optional[str] = typer.Option(None, "--compare", help="Second model to compare"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ):
@@ -218,12 +220,17 @@ def benchmark(
 
     model_size_gb = model_path.stat().st_size / (1024**3)
 
+    device_info = ""
+    if device != "auto" or backend != "auto":
+        device_info = f"\n[cyan]Device:[/cyan] {device}\n[cyan]Backend:[/cyan] {backend}"
+
     console.print(
         Panel(
             f"[cyan]Model:[/cyan] {model_path.name}\n"
             f"[cyan]Size:[/cyan] {model_size_gb:.2f} GB\n"
             f"[cyan]Tokens:[/cyan] {n_tokens}\n"
-            f"[cyan]Runs:[/cyan] {n_runs}",
+            f"[cyan]Runs:[/cyan] {n_runs}"
+            f"{device_info}",
             title="Benchmark Configuration",
         )
     )
@@ -253,6 +260,8 @@ def benchmark(
                 n_runs=n_runs,
                 warmup=warmup,
                 ctx_size=ctx_size,
+                device=device,
+                backend=backend,
             )
             results.append(result)
 
@@ -267,6 +276,8 @@ def benchmark(
         output = {
             "model": results[0].model,
             "model_size_gb": results[0].model_size_gb,
+            "device": results[0].device,
+            "backend": results[0].backend,
             "prompt_tokens": results[0].prompt_tokens,
             "completion_tokens": results[0].completion_tokens,
             "tokens_per_second": round(results[0].tokens_per_second, 2),
