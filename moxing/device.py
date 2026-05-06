@@ -1074,23 +1074,39 @@ class DeviceDetector:
                         return d
                 if backend_type:
                     for d in self._devices:
-                        if d.index == idx and d.backend != BackendType.CPU and (
-                            backend_type == BackendType.ROCM
-                            and d.vendor == "amd"
-                            or backend_type == BackendType.CUDA
-                            and d.vendor == "nvidia"
-                            or backend_type == BackendType.VULKAN
+                        if (
+                            d.index == idx
+                            and d.backend != BackendType.CPU
+                            and (
+                                backend_type == BackendType.ROCM
+                                and d.vendor == "amd"
+                                or backend_type == BackendType.CUDA
+                                and d.vendor == "nvidia"
+                                or backend_type == BackendType.VULKAN
+                            )
                         ):
                             return d
             except ValueError:
                 pass
 
-        for backend in ["vulkan", "cuda", "rocm", "metal", "mlx", "mps"]:
-            if device_name.startswith(backend):
+        for backend_prefix in ["vulkan", "cuda", "rocm", "hip", "metal", "mtl", "mlx", "mps"]:
+            if device_name.lower().startswith(backend_prefix):
+                prefix_len = len(backend_prefix)
                 try:
-                    idx = int(device_name[len(backend) :])
+                    idx = int(device_name[prefix_len:])
+                    canonical_backends = {
+                        "hip": "rocm",
+                        "mtl": "metal",
+                    }
+                    effective_backend = canonical_backends.get(backend_prefix, backend_prefix)
                     for d in self._devices:
-                        if d.index == idx and d.backend.value == backend:
+                        if d.backend.value == effective_backend and (d.backend_index == idx):
+                            return d
+                    for d in self._devices:
+                        if d.backend.value == effective_backend and d.index == idx:
+                            return d
+                    for d in self._devices:
+                        if d.backend.value == effective_backend:
                             return d
                 except ValueError:
                     pass
@@ -1098,6 +1114,24 @@ class DeviceDetector:
         for d in self._devices:
             if d.name.lower() == device_name:
                 return d
+
+        if backend_type:
+            matching = [
+                d
+                for d in self._devices
+                if d.backend == backend_type and d.backend != BackendType.CPU
+            ]
+            if matching:
+                try:
+                    clean = device_name.replace("gpu", "").replace("ROCm", "")
+                    clean = clean.replace("CUDA", "").replace("Vulkan", "").replace("MTL", "")
+                    idx = int(clean)
+                    for d in matching:
+                        if d.backend_index == idx:
+                            return d
+                except (ValueError, AttributeError):
+                    pass
+                return None
 
         return None
 
@@ -1230,20 +1264,19 @@ class DeviceDetector:
             else:
                 env["HIP_VISIBLE_DEVICES"] = "0"
 
-            rocm_paths = [
+            rocm_candidates = [
                 "/opt/rocm/lib",
                 "/opt/rocm/core/lib",
             ]
-            import glob
+            import glob as _glob
 
-            rocm_core_paths = glob.glob("/opt/rocm/core-*/lib")
-            rocm_paths.extend(rocm_core_paths)
+            rocm_candidates.extend(_glob.glob("/opt/rocm/core-*/lib"))
+            rocm_candidates.extend(_glob.glob("/opt/rocm-*/lib"))
 
             ld_path = env.get("LD_LIBRARY_PATH", "")
-            for path in rocm_paths:
+            for path in rocm_candidates:
                 if Path(path).exists():
                     ld_path = f"{path}:{ld_path}"
-                    break
             env["LD_LIBRARY_PATH"] = ld_path
 
         elif backend == BackendType.CUDA:
