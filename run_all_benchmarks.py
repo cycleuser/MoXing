@@ -75,17 +75,12 @@ def run_benchmark(model_path, backend, device_id, prompt="standard", n_tokens=12
         "-r", str(n_runs),
         "-w",
         "-c", str(ctx_size),
+        "-d", device_id,
+        "-b", backend,
         "--json",
     ]
 
-    device_index = 0
-    if device_id.startswith("gpu"):
-        try:
-            device_index = int(device_id[3:])
-        except ValueError:
-            pass
-
-    env = get_env_for_backend(backend, device_index)
+    env = dict(os.environ)
 
     result = subprocess.run(
         cmd,
