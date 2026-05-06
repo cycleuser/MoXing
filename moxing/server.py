@@ -2,6 +2,7 @@
 Server management for llama.cpp
 """
 
+import contextlib
 import logging
 import os
 import socket
@@ -268,9 +269,7 @@ class LlamaServer:
                         f"({available_vram_gb:.1f}GB)[/yellow]"
                     )
                     suggested = offload_plan.suggested_cpu_layers
-                    console.print(
-                        f"[yellow]Suggested CPU offload: {suggested} layers[/yellow]"
-                    )
+                    console.print(f"[yellow]Suggested CPU offload: {suggested} layers[/yellow]")
 
                     if sys.stdin.isatty():
                         try:
@@ -345,6 +344,101 @@ class LlamaServer:
 
         return gpus
 
+    def _parse_device_index(self) -> int:
+        """Parse the device index from self.device string."""
+        dev_lower = self.device.lower()
+        prefix_offsets = [
+            ("rocm", 4),
+            ("hip", 3),
+            ("cuda", 4),
+            ("vulkan", 6),
+            ("mtl", 3),
+            ("gpu", 3),
+        ]
+        for prefix, offset in prefix_offsets:
+            if dev_lower.startswith(prefix):
+                with contextlib.suppress(ValueError):
+                    return int(self.device[offset:])
+        return 0
+
+    def _resolve_device_arg(self) -> Optional[str]:
+        """Resolve the -dev argument for the current device/backend combo."""
+        if self.n_gpu_layers == 0:
+            return None
+
+        backend_dev_prefix = {
+            "vulkan": "Vulkan",
+            "rocm": "ROCm",
+            "cuda": "CUDA",
+            "metal": "MTL",
+        }
+
+        prefix = backend_dev_prefix.get(self.gpu_backend)
+        if not prefix:
+            return None
+
+        if self.device == "auto" or self.device == "CPU":
+            return f"{prefix}0"
+
+        if self.device.lower().startswith(self.gpu_backend) or (
+            self.gpu_backend == "rocm" and self.device.lower().startswith("hip")
+        ):
+            return self.device
+
+        dev_idx = self._find_backend_device_index()
+        if dev_idx is not None:
+            return f"{prefix}{dev_idx}"
+
+        return f"{prefix}0"
+
+    def _find_backend_device_index(self) -> Optional[int]:
+        """Find the correct device index by querying the actual backend binary."""
+        try:
+            binary_path = self._get_binary_for_backend()
+            if not binary_path.exists():
+                return None
+
+            from moxing.device import DeviceDetector
+
+            detector = DeviceDetector()
+            target_device = detector.get_device_by_name(self.device, self.gpu_backend)
+            if not target_device:
+                return None
+
+            result = subprocess.run(
+                [str(binary_path), "--list-devices"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+                cwd=str(binary_path.parent),
+            )
+
+            import re
+
+            target_name_lower = target_device.name.lower()
+            for line in result.stdout.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                match = re.match(r"(\w+)(\d+):\s*(.+?)\s*\(\d+\s*MiB", line)
+                if match:
+                    dev_backend = match.group(1).lower()
+                    dev_idx = int(match.group(2))
+                    dev_name = match.group(3).strip().lower()
+                    is_matching_backend = dev_backend == self.gpu_backend or (
+                        self.gpu_backend == "rocm" and dev_backend == "hip"
+                    )
+                    if is_matching_backend and (
+                        target_name_lower in dev_name or dev_name in target_name_lower
+                    ):
+                        return dev_idx
+
+            return None
+        except Exception as e:
+            logger.debug("Backend device index lookup failed: %s", e, exc_info=True)
+            return None
+
     def _build_args(self) -> List[str]:
         """Build command line arguments."""
         args = [
@@ -374,30 +468,9 @@ class LlamaServer:
         else:
             args.extend(["-ngl", "auto"])
 
-        if self.gpu_backend == "vulkan" and self.n_gpu_layers != 0:
-            args.extend(["-dev", "Vulkan0"])
-        elif self.device != "auto" and self.device != "CPU" and self.n_gpu_layers != 0:
-            if self.gpu_backend in ["cuda", "rocm"]:
-                from moxing.device import DeviceDetector
-                detector = DeviceDetector()
-                device_obj = detector.get_device_by_name(self.device, self.gpu_backend)
-                if device_obj:
-                    dev_idx = device_obj.backend_index if device_obj.backend_index >= 0 else device_obj.index
-                    args.extend(["-dev", str(dev_idx)])
-            else:
-                from moxing.device import DeviceDetector
-                detector = DeviceDetector()
-                device_obj = detector.get_device_by_name(self.device, self.gpu_backend)
-                if device_obj:
-                    dev_idx = device_obj.backend_index if device_obj.backend_index >= 0 else device_obj.index
-                    if self.gpu_backend == "metal":
-                        device_arg = f"MTL{dev_idx}"
-                    else:
-                        device_arg = str(dev_idx)
-                    args.extend(["-dev", device_arg])
-
-        if self.gpu_backend not in ["auto", "cpu"]:
-            os.environ["GGML_BACKEND"] = self.gpu_backend
+        device_arg = self._resolve_device_arg()
+        if device_arg:
+            args.extend(["-dev", device_arg])
 
         if self.n_threads > 0:
             args.extend(["--threads", str(self.n_threads)])
@@ -559,8 +632,7 @@ class LlamaServer:
                     device_match = False
 
                     if target_backend in ["rocm", "hip"] and (
-                        "HIP_VISIBLE_DEVICES" in cmdline_str
-                        or f"-d {target_device}" in cmdline_str
+                        "HIP_VISIBLE_DEVICES" in cmdline_str or f"-d {target_device}" in cmdline_str
                     ):
                         device_match = True
 
@@ -649,14 +721,9 @@ class LlamaServer:
             console.print(f"[dim]Backend: {self.gpu_backend}[/dim]")
 
             if self.cpu_offload_layers > 0:
-                gpu_str = (
-                    str(self.n_gpu_layers)
-                    if self.n_gpu_layers > 0
-                    else 'all'
-                )
+                gpu_str = str(self.n_gpu_layers) if self.n_gpu_layers > 0 else "all"
                 console.print(
-                    f"[dim]GPU layers: {gpu_str}, "
-                    f"CPU offload: {self.cpu_offload_layers}[/dim]"
+                    f"[dim]GPU layers: {gpu_str}, CPU offload: {self.cpu_offload_layers}[/dim]"
                 )
             else:
                 gpu_layers_str = str(self.n_gpu_layers) if self.n_gpu_layers >= 0 else "all"
@@ -675,17 +742,9 @@ class LlamaServer:
                 BackendType(self.gpu_backend) if self.gpu_backend != "auto" else BackendType.CPU
             )
 
-            device_name = self.device
-            if (
-                device_name.startswith("ROCm")
-                or device_name.startswith("CUDA")
-                or device_name.startswith("MTL")
-            ):
-                device_name = "auto"
-
             device_obj = (
-                detector.get_device_by_name(device_name, self.gpu_backend)
-                if device_name != "auto"
+                detector.get_device_by_name(self.device, self.gpu_backend)
+                if self.device != "auto"
                 else None
             )
             backend_env = detector.get_backend_env(backend_type, device_obj)
@@ -694,38 +753,40 @@ class LlamaServer:
             logger.debug("Backend environment setup failed: %s", e, exc_info=True)
             pass
 
+        if self.device != "auto":
+            env.pop("GGML_VK_VISIBLE_DEVICES", None)
+            env.pop("HIP_VISIBLE_DEVICES", None)
+            env.pop("CUDA_VISIBLE_DEVICES", None)
+
         if self.gpu_backend == "rocm":
-            rocm_paths = [
+            import glob as _glob
+
+            rocm_candidates = [
                 "/opt/rocm/lib",
                 "/opt/rocm/core/lib",
             ]
+            rocm_candidates.extend(_glob.glob("/opt/rocm/core-*/lib"))
+            rocm_candidates.extend(_glob.glob("/opt/rocm-*/lib"))
 
-            import glob
-
-            rocm_core_paths = glob.glob("/opt/rocm/core-*/lib")
-            rocm_paths.extend(rocm_core_paths)
-
-            for path in rocm_paths:
+            ld_path = env.get("LD_LIBRARY_PATH", "")
+            for path in rocm_candidates:
                 if Path(path).exists():
-                    if "LD_LIBRARY_PATH" in env:
-                        env["LD_LIBRARY_PATH"] = f"{path}:{env['LD_LIBRARY_PATH']}"
-                    else:
-                        env["LD_LIBRARY_PATH"] = path
-                    break
+                    ld_path = f"{path}:{ld_path}"
 
-            if "HIP_VISIBLE_DEVICES" not in env:
+            env["LD_LIBRARY_PATH"] = ld_path
+
+            if "HIP_VISIBLE_DEVICES" not in env and self.device == "auto":
                 env["HIP_VISIBLE_DEVICES"] = "0"
 
-            if "HSA_OVERRIDE_GFX_VERSION" not in env:
-                env["HSA_OVERRIDE_GFX_VERSION"] = "11.0.0"
-
-        if self.gpu_backend == "cuda" and "CUDA_VISIBLE_DEVICES" not in env:
+        is_auto = self.device == "auto"
+        if self.gpu_backend == "cuda" and is_auto and "CUDA_VISIBLE_DEVICES" not in env:
             env["CUDA_VISIBLE_DEVICES"] = "0"
 
-        if self.gpu_backend == "vulkan" and "GGML_VK_VISIBLE_DEVICES" not in env:
+        if self.gpu_backend == "vulkan" and is_auto and "GGML_VK_VISIBLE_DEVICES" not in env:
             env["GGML_VK_VISIBLE_DEVICES"] = "0"
 
-        env["LD_LIBRARY_PATH"] = f"{binary_path.parent}:{env.get('LD_LIBRARY_PATH', '')}"
+        existing_ld = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = f"{binary_path.parent}:{existing_ld}"
 
         try:
             self._process = subprocess.Popen(

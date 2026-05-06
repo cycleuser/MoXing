@@ -166,18 +166,8 @@ class LlamaCppRunner(BaseRunner):
             n_gpu_layers = device_config.n_gpu_layers
 
         device_str = "auto"
-        if device_config.device.backend != BackendType.CPU:
-            if device_config.backend == BackendType.METAL:
-                device_str = f"MTL{device_config.device.index}"
-            elif device_config.backend == BackendType.ROCM:
-                device_str = f"ROCm{device_config.device.index}"
-            elif device_config.backend == BackendType.CUDA:
-                device_str = f"CUDA{device_config.device.index}"
-            elif device_config.backend == BackendType.VULKAN:
-                dev_idx = device_config.device.backend_index if device_config.device.backend_index >= 0 else device_config.device.index
-                device_str = f"gpu{dev_idx}"
-            else:
-                device_str = "auto"
+        if device_config.device.backend != BackendType.CPU and self.config.device != "auto":
+            device_str = self.config.device
 
         return DeviceConfig(
             backend=device_config.backend.value,
