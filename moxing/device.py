@@ -486,48 +486,63 @@ class DeviceDetector:
                     logger.debug("Operation failed: %s", e, exc_info=True)
                     continue
 
-        has_cuda = any(d.backend == BackendType.CUDA for d in self._devices)
-        if not has_cuda:
-            try:
-                result = subprocess.run(
-                    [
-                        "nvidia-smi",
-                        "--query-gpu=index,name,memory.total,memory.free",
-                        "--format=csv,noheader,nounits",
-                    ],
-                    capture_output=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=10,
-                )
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,name,memory.total,memory.free",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
 
-                if result.returncode == 0:
-                    for line in result.stdout.strip().split("\n"):
-                        parts = line.split(", ")
-                        if len(parts) >= 4:
-                            idx = int(parts[0])
-                            name = parts[1].strip()
-                            memory_mb = int(parts[2])
-                            free_memory_mb = int(parts[3])
+            if result.returncode == 0:
+                nvidia_smi_devices: Dict[int, Dict[str, Any]] = {}
+                for line in result.stdout.strip().split("\n"):
+                    parts = line.split(", ")
+                    if len(parts) >= 4:
+                        idx = int(parts[0])
+                        name = parts[1].strip()
+                        memory_mb = int(parts[2])
+                        free_memory_mb = int(parts[3])
+                        nvidia_smi_devices[idx] = {
+                            "name": name,
+                            "memory_mb": memory_mb,
+                            "free_memory_mb": free_memory_mb,
+                        }
 
-                            exists = any(
-                                d.index == idx and d.backend == BackendType.CUDA
-                                for d in self._devices
+                for idx, info in nvidia_smi_devices.items():
+                    existing = None
+                    for d in self._devices:
+                        if d.backend == BackendType.CUDA and (
+                            d.backend_index == idx or d.index == idx
+                        ):
+                            existing = d
+                            break
+
+                    if existing:
+                        if info["memory_mb"] > 0:
+                            existing.memory_mb = info["memory_mb"]
+                            existing.free_memory_mb = info["free_memory_mb"]
+                        existing.vendor = "nvidia"
+                        existing.name = info["name"]
+                    else:
+                        self._devices.append(
+                            Device(
+                                index=idx,
+                                name=info["name"],
+                                backend=BackendType.CUDA,
+                                memory_mb=info["memory_mb"],
+                                free_memory_mb=info["free_memory_mb"],
+                                vendor="nvidia",
                             )
-                            if not exists:
-                                self._devices.append(
-                                    Device(
-                                        index=idx,
-                                        name=name,
-                                        backend=BackendType.CUDA,
-                                        memory_mb=memory_mb,
-                                        free_memory_mb=free_memory_mb,
-                                        vendor="nvidia",
-                                    )
-                                )
-            except Exception as e:
-                logger.debug("Operation failed: %s", e, exc_info=True)
-                pass
+                        )
+        except Exception as e:
+            logger.debug("Operation failed: %s", e, exc_info=True)
+            pass
 
         if sys.platform == "darwin":
             if not any(d.backend == BackendType.METAL for d in self._devices):
@@ -754,6 +769,8 @@ class DeviceDetector:
             or "geforce" in name_lower
             or "rtx" in name_lower
             or "gtx" in name_lower
+            or "tesla" in name_lower
+            or "quadro" in name_lower
         ):
             return "nvidia"
         elif "amd" in name_lower or "radeon" in name_lower or "rx" in name_lower:
