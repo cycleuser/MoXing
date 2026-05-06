@@ -638,9 +638,497 @@ class DeviceDetector:
             )
         )
 
+        self._supplement_gpu_memory_all_platforms()
+
         self._reassign_device_indices()
 
         return self._devices
+
+    def _supplement_gpu_memory_all_platforms(self) -> None:
+        """Detect GPU memory via platform-specific methods for all GPUs.
+
+        This supplements devices detected by llama.cpp --list-devices that
+        lack memory information (e.g., Vulkan devices on Windows/Linux).
+
+        Platform methods:
+        - Windows: PowerShell WMI (Win32_VideoController)
+        - Linux:   sysfs (/sys/class/drm), lspci, glxinfo
+        - macOS:   system_profiler SPDisplaysDataType
+        """
+        devices_to_supplement = [
+            d for d in self._devices
+            if d.backend != BackendType.CPU and d.memory_mb == 0
+        ]
+        if not devices_to_supplement:
+            return
+
+        if sys.platform == "win32":
+            self._supplement_gpu_memory_windows(devices_to_supplement)
+        elif sys.platform == "linux":
+            self._supplement_gpu_memory_linux(devices_to_supplement)
+        elif sys.platform == "darwin":
+            self._supplement_gpu_memory_macos(devices_to_supplement)
+
+    def _supplement_gpu_memory_windows(self, devices: List[Device]) -> None:
+        """Detect GPU memory on Windows via multiple methods.
+
+        Priority:
+        1. vulkaninfo (actual VRAM from Vulkan memory heaps)
+        2. PowerShell WMI (Win32_VideoController, may report aperture only)
+        """
+        if self._supplement_gpu_memory_vulkaninfo(devices):
+            return
+
+        self._supplement_gpu_memory_powershell(devices)
+
+    def _supplement_gpu_memory_vulkaninfo(self, devices: List[Device]) -> bool:
+        """Detect GPU memory by parsing vulkaninfo output.
+
+        Parses memoryHeaps with MEMORY_HEAP_DEVICE_LOCAL_BIT to get actual VRAM.
+        Returns True if at least one device was supplemented.
+        """
+        vulkaninfo_paths = [
+            "vulkaninfo",
+            "vulkaninfo.exe",
+            r"C:\WINDOWS\system32\vulkaninfo.exe",
+            r"C:\WINDOWS\SysWOW64\vulkaninfo.exe",
+        ]
+
+        vulkaninfo_cmd = None
+        for path in vulkaninfo_paths:
+            try:
+                result = subprocess.run(
+                    [path, "--summary"],
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15,
+                )
+                if result.returncode == 0 and result.stdout:
+                    vulkaninfo_cmd = path
+                    break
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
+
+        if not vulkaninfo_cmd:
+            return False
+
+        try:
+            result = subprocess.run(
+                [vulkaninfo_cmd],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+            )
+            output = result.stdout + result.stderr
+        except (subprocess.TimeoutExpired, Exception):
+            return False
+
+        # Parse GPU names and their VRAM from memory heaps
+        gpu_names: List[str] = []
+        gpu_vram: Dict[str, int] = {}
+
+        lines = output.split("\n")
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Detect GPU name
+            if "deviceName" in line:
+                match = re.search(r"deviceName\s*=\s*(.+)", line)
+                if match:
+                    gpu_names.append(match.group(1).strip())
+
+            # Detect memoryHeaps section
+            if "memoryHeaps:" in line:
+                heap_sizes: List[int] = []
+                heap_is_device_local: List[bool] = []
+
+                i += 1
+                while i < len(lines):
+                    heap_line = lines[i].strip()
+
+                    # New heap entry
+                    heap_match = re.match(r"memoryHeaps\[(\d+)\]:", heap_line)
+                    if heap_match:
+                        i += 1
+                        # Read size
+                        while i < len(lines):
+                            size_line = lines[i].strip()
+                            if "size" in size_line:
+                                size_match = re.search(r"size\s*=\s*(\d+)", size_line)
+                                if size_match:
+                                    heap_sizes.append(int(size_match.group(1)))
+                                i += 1
+                                break
+                            i += 1
+
+                        # Read flags to check DEVICE_LOCAL
+                        is_local = False
+                        while i < len(lines):
+                            flag_line = lines[i].strip()
+                            if "MEMORY_HEAP_DEVICE_LOCAL_BIT" in flag_line:
+                                is_local = True
+                            if flag_line.startswith("memoryHeaps[") or \
+                               flag_line.startswith("memoryTypes:") or \
+                               flag_line.startswith("==="):
+                                break
+                            i += 1
+                        heap_is_device_local.append(is_local)
+                        continue
+
+                    if heap_line.startswith("memoryTypes:") or \
+                       heap_line.startswith("==="):
+                        break
+                    i += 1
+
+                # VRAM is the largest heap with DEVICE_LOCAL_BIT
+                max_vram_mb = 0
+                for size, is_local in zip(heap_sizes, heap_is_device_local):
+                    if is_local:
+                        size_mb = int(size / (1024 * 1024))
+                        if size_mb > max_vram_mb:
+                            max_vram_mb = size_mb
+
+                if max_vram_mb > 0 and gpu_names:
+                    gpu_name = gpu_names[-1]
+                    gpu_vram[gpu_name] = max_vram_mb
+
+            i += 1
+
+        supplemented = False
+        for device in devices:
+            if device.memory_mb > 0:
+                continue
+
+            for gpu_name, vram_mb in gpu_vram.items():
+                if self._gpu_names_match(gpu_name, device.name):
+                    device.memory_mb = vram_mb
+                    device.free_memory_mb = vram_mb
+                    logger.debug(
+                        "Supplemented %s memory via vulkaninfo: %d MB (%.1f GB)",
+                        device.name,
+                        vram_mb,
+                        vram_mb / 1024,
+                    )
+                    supplemented = True
+                    break
+
+        return supplemented
+
+    def _supplement_gpu_memory_powershell(self, devices: List[Device]) -> None:
+        """Fallback: detect GPU memory via PowerShell WMI on Windows.
+
+        Uses Win32_VideoController to get adapter RAM.
+        Note: For AMD GPUs this may report aperture memory, not actual VRAM.
+        """
+        try:
+            ps_cmd = (
+                "Get-CimInstance Win32_VideoController | "
+                "Select-Object Name, AdapterRAM, PNPDeviceID | "
+                "ConvertTo-Json -Compress"
+            )
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+            )
+
+            if result.returncode != 0 or not result.stdout.strip():
+                return
+
+            import json
+
+            data = json.loads(result.stdout)
+            if not isinstance(data, list):
+                data = [data]
+
+            for gpu_info in data:
+                name = gpu_info.get("Name", "")
+                adapter_ram = gpu_info.get("AdapterRAM", 0)
+
+                if not name or not adapter_ram or adapter_ram <= 0:
+                    continue
+
+                memory_mb = int(adapter_ram / (1024 * 1024))
+
+                for device in devices:
+                    if device.memory_mb > 0:
+                        continue
+                    if self._gpu_names_match(name, device.name):
+                        device.memory_mb = memory_mb
+                        device.free_memory_mb = memory_mb
+                        logger.debug(
+                            "Supplemented %s memory via WMI: %d MB",
+                            device.name,
+                            memory_mb,
+                        )
+
+        except Exception as e:
+            logger.debug("PowerShell GPU detection failed: %s", e, exc_info=True)
+
+    def _supplement_gpu_memory_linux(self, devices: List[Device]) -> None:
+        """Detect GPU memory on Linux via multiple methods.
+
+        Priority:
+        1. vulkaninfo (actual VRAM from Vulkan memory heaps)
+        2. sysfs (/sys/class/drm)
+        3. lspci
+        4. glxinfo
+        """
+        if self._supplement_gpu_memory_vulkaninfo(devices):
+            return
+
+        for device in devices:
+            if device.memory_mb > 0:
+                continue
+
+            memory_mb = self._detect_gpu_memory_sysfs(device)
+            if memory_mb > 0:
+                device.memory_mb = memory_mb
+                device.free_memory_mb = memory_mb
+                logger.debug(
+                    "Supplemented %s memory via sysfs: %d MB",
+                    device.name,
+                    memory_mb,
+                )
+                continue
+
+            memory_mb = self._detect_gpu_memory_lspci(device)
+            if memory_mb > 0:
+                device.memory_mb = memory_mb
+                device.free_memory_mb = memory_mb
+                logger.debug(
+                    "Supplemented %s memory via lspci: %d MB",
+                    device.name,
+                    memory_mb,
+                )
+                continue
+
+            memory_mb = self._detect_gpu_memory_glxinfo(device)
+            if memory_mb > 0:
+                device.memory_mb = memory_mb
+                device.free_memory_mb = memory_mb
+                logger.debug(
+                    "Supplemented %s memory via glxinfo: %d MB",
+                    device.name,
+                    memory_mb,
+                )
+
+    def _detect_gpu_memory_sysfs(self, device: Device) -> int:
+        """Detect GPU memory via /sys/class/drm on Linux."""
+        drm_path = Path("/sys/class/drm")
+        if not drm_path.exists():
+            return 0
+
+        name_lower = device.name.lower()
+
+        for card in drm_path.glob("card[0-9]*"):
+            try:
+                uevent_path = card / "device/uevent"
+                if not uevent_path.exists():
+                    continue
+
+                content = uevent_path.read_text()
+
+                is_match = False
+                if "amdgpu" in content.lower() or "AMD" in content:
+                    if device.vendor == "amd" or "radeon" in name_lower or "rx " in name_lower:
+                        is_match = True
+                if "10de" in content:
+                    if device.vendor == "nvidia" or "nvidia" in name_lower:
+                        is_match = True
+                if "8086" in content:
+                    if device.vendor == "intel" or "intel" in name_lower:
+                        is_match = True
+
+                if not is_match:
+                    continue
+
+                vram_path = card / "device/mem_info_vram_total"
+                if vram_path.exists():
+                    vram_bytes = int(vram_path.read_text().strip())
+                    return int(vram_bytes / (1024 * 1024))
+            except Exception:
+                continue
+
+        return 0
+
+    def _detect_gpu_memory_lspci(self, device: Device) -> int:
+        """Detect GPU memory via lspci on Linux."""
+        try:
+            result = subprocess.run(
+                ["lspci", "-v", "-mm"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+
+            if result.returncode != 0:
+                return 0
+
+            name_lower = device.name.lower()
+            in_gpu_section = False
+
+            for line in result.stdout.split("\n"):
+                if "VGA" in line or "3D" in line or "Display" in line:
+                    if self._gpu_names_match_from_lspci(line, device):
+                        in_gpu_section = True
+                        continue
+                    else:
+                        in_gpu_section = False
+
+                if in_gpu_section and "Region" in line and "Memory" in line:
+                    match = re.search(r"Size=(\d+)([KMG])", line)
+                    if match:
+                        size = int(match.group(1))
+                        unit = match.group(2)
+                        if unit == "G":
+                            return size * 1024
+                        elif unit == "M":
+                            return size
+                        elif unit == "K":
+                            return max(1, size // 1024)
+
+            return 0
+        except Exception:
+            return 0
+
+    def _gpu_names_match_from_lspci(self, line: str, device: Device) -> bool:
+        """Check if lspci line matches the device."""
+        name_lower = device.name.lower()
+        line_lower = line.lower()
+
+        if "radeon" in line_lower and ("radeon" in name_lower or "rx " in name_lower):
+            return True
+        if "nvidia" in line_lower and ("nvidia" in name_lower or "tesla" in name_lower or "geforce" in name_lower):
+            return True
+        if "intel" in line_lower and "intel" in name_lower:
+            return True
+        if "amd" in line_lower and device.vendor == "amd":
+            return True
+
+        return False
+
+    def _detect_gpu_memory_glxinfo(self, device: Device) -> int:
+        """Detect GPU memory via glxinfo on Linux."""
+        try:
+            result = subprocess.run(
+                ["glxinfo", "-T"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+
+            if result.returncode != 0:
+                return 0
+
+            for line in result.stdout.split("\n"):
+                if "Video memory" in line or "Dedicated video memory" in line:
+                    match = re.search(r"(\d+)\s*MB", line)
+                    if match:
+                        return int(match.group(1))
+
+            return 0
+        except Exception:
+            return 0
+
+    def _supplement_gpu_memory_macos(self, devices: List[Device]) -> None:
+        """Detect GPU memory on macOS via system_profiler."""
+        try:
+            result = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+
+            if result.returncode != 0:
+                return
+
+            current_gpu_name = ""
+            current_vram_mb = 0
+
+            for line in result.stdout.split("\n"):
+                line = line.strip()
+
+                if "Chipset Model:" in line or "Model:" in line:
+                    current_gpu_name = line.split(":", 1)[1].strip()
+
+                if "VRAM" in line or "Total Number of Cores" in line:
+                    match = re.search(r"(\d+)\s*(?:MB|GB)", line)
+                    if match:
+                        size = int(match.group(1))
+                        if "GB" in line:
+                            current_vram_mb = size * 1024
+                        elif "MB" in line:
+                            current_vram_mb = size
+
+                if current_gpu_name and current_vram_mb > 0:
+                    for device in devices:
+                        if device.memory_mb > 0:
+                            continue
+                        if self._gpu_names_match(current_gpu_name, device.name):
+                            device.memory_mb = current_vram_mb
+                            device.free_memory_mb = current_vram_mb
+                            logger.debug(
+                                "Supplemented %s memory via system_profiler: %d MB",
+                                device.name,
+                                current_vram_mb,
+                            )
+
+                    current_gpu_name = ""
+                    current_vram_mb = 0
+
+        except Exception as e:
+            logger.debug("macOS GPU detection via system_profiler failed: %s", e, exc_info=True)
+
+    def _gpu_names_match(self, name_a: str, name_b: str) -> bool:
+        """Check if two GPU names refer to the same hardware."""
+        a = name_a.lower().strip()
+        b = name_b.lower().strip()
+
+        if a == b:
+            return True
+
+        a_clean = re.sub(r'[\s\(\)\/\-]+', '', a)
+        b_clean = re.sub(r'[\s\(\)\/\-]+', '', b)
+        if a_clean == b_clean:
+            return True
+
+        a_short = a.replace("amd ", "").replace("radeon ", "").replace("graphics", "").strip()
+        b_short = b.replace("amd ", "").replace("radeon ", "").replace("graphics", "").strip()
+        if a_short == b_short:
+            return True
+
+        rx_a = re.search(r'rx\s*(\d+)', a)
+        rx_b = re.search(r'rx\s*(\d+)', b)
+        if rx_a and rx_b:
+            if rx_a.group(1) == rx_b.group(1):
+                return True
+            rx580_variants = {"570", "580", "590", "5802048sp"}
+            if rx_a.group(1) in rx580_variants and rx_b.group(1) in rx580_variants:
+                return True
+
+        for keyword in ["tesla", "quadro", "geforce", "rtx", "gtx"]:
+            if keyword in a and keyword in b:
+                model_a = re.search(r'(?:p\d+|\d{4})', a)
+                model_b = re.search(r'(?:p\d+|\d{4})', b)
+                if model_a and model_b and model_a.group() == model_b.group():
+                    return True
+
+        a_key = self._get_device_key(a)
+        b_key = self._get_device_key(b)
+        if a_key == b_key:
+            return True
+
+        return False
 
     def _get_macos_unified_memory(self) -> float:
         """Get unified memory size on macOS."""
