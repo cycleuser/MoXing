@@ -632,8 +632,8 @@ class DeviceDetector:
                 index=0,
                 name="CPU",
                 backend=BackendType.CPU,
-                memory_mb=0,
-                free_memory_mb=0,
+                memory_mb=self._get_system_memory_mb(),
+                free_memory_mb=self._get_free_memory_mb(),
                 vendor="cpu",
             )
         )
@@ -1129,6 +1129,94 @@ class DeviceDetector:
             return True
 
         return False
+
+    def _get_system_memory_mb(self) -> int:
+        """Get total system RAM in MB."""
+        try:
+            import psutil
+            return int(psutil.virtual_memory().total / (1024 * 1024))
+        except Exception:
+            pass
+
+        if sys.platform == "win32":
+            return self._get_memory_mb_windows()
+        elif sys.platform == "linux":
+            return self._get_memory_mb_linux()
+        elif sys.platform == "darwin":
+            return int(self._get_macos_unified_memory() * 1024)
+
+        return 0
+
+    def _get_free_memory_mb(self) -> int:
+        """Get free system RAM in MB."""
+        try:
+            import psutil
+            return int(psutil.virtual_memory().available / (1024 * 1024))
+        except Exception:
+            pass
+
+        if sys.platform == "win32":
+            return self._get_free_memory_mb_windows()
+        elif sys.platform == "linux":
+            return self._get_free_memory_mb_linux()
+
+        return 0
+
+    def _get_memory_mb_windows(self) -> int:
+        """Get total RAM on Windows via PowerShell."""
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-CimInstance Win32_PhysicalMemory | Measure-Object Capacity -Sum).Sum"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return int(int(result.stdout.strip()) / (1024 * 1024))
+        except Exception:
+            pass
+        return 0
+
+    def _get_free_memory_mb_windows(self) -> int:
+        """Get free RAM on Windows via PowerShell."""
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return int(result.stdout.strip())
+        except Exception:
+            pass
+        return 0
+
+    def _get_memory_mb_linux(self) -> int:
+        """Get total RAM on Linux via /proc/meminfo."""
+        try:
+            meminfo = Path("/proc/meminfo").read_text()
+            match = re.search(r"MemTotal:\s+(\d+)\s*kB", meminfo)
+            if match:
+                return int(match.group(1)) // 1024
+        except Exception:
+            pass
+        return 0
+
+    def _get_free_memory_mb_linux(self) -> int:
+        """Get free RAM on Linux via /proc/meminfo."""
+        try:
+            meminfo = Path("/proc/meminfo").read_text()
+            match = re.search(r"MemAvailable:\s+(\d+)\s*kB", meminfo)
+            if match:
+                return int(match.group(1)) // 1024
+        except Exception:
+            pass
+        return 0
 
     def _get_macos_unified_memory(self) -> float:
         """Get unified memory size on macOS."""
