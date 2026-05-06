@@ -374,11 +374,27 @@ class LlamaServer:
         else:
             args.extend(["-ngl", "auto"])
 
-        if self.device != "auto" and self.device != "CPU" and self.n_gpu_layers != 0:
+        if self.gpu_backend == "vulkan" and self.n_gpu_layers != 0:
+            args.extend(["-dev", "Vulkan0"])
+        elif self.device != "auto" and self.device != "CPU" and self.n_gpu_layers != 0:
             if self.gpu_backend in ["cuda", "rocm"]:
-                pass
+                from moxing.device import DeviceDetector
+                detector = DeviceDetector()
+                device_obj = detector.get_device_by_name(self.device, self.gpu_backend)
+                if device_obj:
+                    dev_idx = device_obj.backend_index if device_obj.backend_index >= 0 else device_obj.index
+                    args.extend(["-dev", str(dev_idx)])
             else:
-                args.extend(["-dev", self.device])
+                from moxing.device import DeviceDetector
+                detector = DeviceDetector()
+                device_obj = detector.get_device_by_name(self.device, self.gpu_backend)
+                if device_obj:
+                    dev_idx = device_obj.backend_index if device_obj.backend_index >= 0 else device_obj.index
+                    if self.gpu_backend == "metal":
+                        device_arg = f"MTL{dev_idx}"
+                    else:
+                        device_arg = str(dev_idx)
+                    args.extend(["-dev", device_arg])
 
         if self.gpu_backend not in ["auto", "cpu"]:
             os.environ["GGML_BACKEND"] = self.gpu_backend
@@ -702,6 +718,12 @@ class LlamaServer:
 
             if "HSA_OVERRIDE_GFX_VERSION" not in env:
                 env["HSA_OVERRIDE_GFX_VERSION"] = "11.0.0"
+
+        if self.gpu_backend == "cuda" and "CUDA_VISIBLE_DEVICES" not in env:
+            env["CUDA_VISIBLE_DEVICES"] = "0"
+
+        if self.gpu_backend == "vulkan" and "GGML_VK_VISIBLE_DEVICES" not in env:
+            env["GGML_VK_VISIBLE_DEVICES"] = "0"
 
         env["LD_LIBRARY_PATH"] = f"{binary_path.parent}:{env.get('LD_LIBRARY_PATH', '')}"
 

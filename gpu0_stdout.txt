@@ -1,0 +1,21 @@
++----------------- omnicoder-2-9b-q5_k_ | llama.cpp | vulkan -----------------+
+| Server: http://127.0.0.1:8080                                               |
+| OpenAI API: http://127.0.0.1:8080/v1                                        |
+| Runner: llama.cpp                                                           |
+| Device: gpu0                                                                |
+| Press Ctrl+C to stop                                                        |
++-----------------------------------------------------------------------------+
+Starting llama-server...
+Binary: 
+C:\Users\frede\.cache\moxing\binaries\windows-x64-vulkan\llama-server.exe
+Command: 
+C:\Users\frede\.cache\moxing\binaries\windows-x64-vulkan\llama-server.exe -m 
+C:\Users\frede\Documents\GitHub\MoXing\omnicoder-2-9b-q5_k_m.gguf --host 
+127.0.0.1 --port 8080 -c 4096 --metrics -ngl auto -dev Vulkan0 --batch-size 512
+--ubatch-size 512 --kv-unified -ctk q4_0 -ctv q4_0 --cont-batching 
+--defrag-thold 0.1
+Working dir: C:\Users\frede\.cache\moxing\binaries\windows-x64-vulkan
+Model: C:\Users\frede\Documents\GitHub\MoXing\omnicoder-2-9b-q5_k_m.gguf
+Backend: vulkan
+GPU layers: all
+Context: 4096
