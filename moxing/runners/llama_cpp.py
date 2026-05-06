@@ -174,7 +174,8 @@ class LlamaCppRunner(BaseRunner):
             elif device_config.backend == BackendType.CUDA:
                 device_str = f"CUDA{device_config.device.index}"
             elif device_config.backend == BackendType.VULKAN:
-                device_str = "auto"
+                dev_idx = device_config.device.backend_index if device_config.device.backend_index >= 0 else device_config.device.index
+                device_str = f"gpu{dev_idx}"
             else:
                 device_str = "auto"
 

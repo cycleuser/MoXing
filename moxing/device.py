@@ -1250,13 +1250,17 @@ class DeviceDetector:
             if device:
                 backend_idx = device.backend_index if device.backend_index >= 0 else device.index
                 env["CUDA_VISIBLE_DEVICES"] = str(backend_idx)
+            else:
+                env["CUDA_VISIBLE_DEVICES"] = "0"
 
-        elif (
-            backend == BackendType.METAL
-            or backend == BackendType.VULKAN
-            or backend == BackendType.MLX
-            or backend == BackendType.MPS
-        ):
+        elif backend == BackendType.VULKAN:
+            if device:
+                backend_idx = device.backend_index if device.backend_index >= 0 else device.index
+                env["GGML_VK_VISIBLE_DEVICES"] = str(backend_idx)
+            else:
+                env["GGML_VK_VISIBLE_DEVICES"] = "0"
+
+        elif backend in (BackendType.METAL, BackendType.MLX, BackendType.MPS):
             pass
 
         return env
