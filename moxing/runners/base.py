@@ -48,6 +48,7 @@ class RunnerConfig:
     cpu_offload_layers: int = 0
     cpu_moe: bool = False
     speculative_draft: Optional[str] = None
+    speculative_type: str = ""
     speculative_max: int = 5
     speculative_min: int = 0
     speculative_pmin: float = 0.75

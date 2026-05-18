@@ -15,7 +15,6 @@ Environment variables:
     MOXING_NO_UPDATE_CHECK  - Skip update check (set to "1")
 """
 
-import json
 import logging
 import os
 import platform
@@ -29,8 +28,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Dict, List, Optional, Tuple
-from urllib.request import Request, urlopen
 
+import httpx
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -145,14 +144,19 @@ class PlatformDetector:
     def _has_nvidia() -> bool:
         try:
             result = subprocess.run(
-                ["nvidia-smi"] if sys.platform != "win32" else ["nvidia-smi"],
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
                 capture_output=True,
-                timeout=5,
-                shell=(sys.platform == "win32"),
+                timeout=10,
             )
-            return result.returncode == 0
-        except Exception as e:
-            logger.debug("GPU detection via nvidia-smi failed: %s", e, exc_info=True)
+            if result.returncode != 0:
+                return False
+            output = result.stdout.decode("utf-8", errors="replace").strip()
+            if not output:
+                return False
+            if "no devices" in output.lower():
+                return False
+            return any(kw in output for kw in ("NVIDIA", "Tesla", "GeForce", "Quadro"))
+        except Exception:
             return False
 
     @staticmethod
@@ -269,13 +273,16 @@ def get_latest_llama_cpp_version() -> Optional[str]:
     """Get the latest llama.cpp release version."""
     try:
         url = f"https://api.github.com/repos/{LLAMA_CPP_REPO}/releases/latest"
-        req = Request(
-            url, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "moxing"}
-        )
+        headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "moxing"}
+        token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
 
-        with urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode())
-            return data.get("tag_name")
+        with httpx.Client(timeout=10, follow_redirects=True) as client:
+            response = client.get(url, headers=headers)
+            if response.status_code != 200:
+                return None
+            return response.json().get("tag_name")
     except Exception as e:
         logger.debug("llama.cpp version check failed: %s", e, exc_info=True)
         return None
@@ -285,12 +292,15 @@ def get_moxing_binaries_release() -> Optional[VersionInfo]:
     """Get version info from moxing binaries release."""
     try:
         url = f"https://api.github.com/repos/{MOXING_REPO}/releases/tags/binaries"
-        req = Request(
-            url, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "moxing"}
-        )
+        headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "moxing"}
+        token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
 
-        with urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode())
+        with httpx.Client(timeout=10, follow_redirects=True) as client:
+            response = client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
 
             body = data.get("body", "")
             moxing_version = None
@@ -311,7 +321,7 @@ def get_moxing_binaries_release() -> Optional[VersionInfo]:
                 release_url=f"https://github.com/{MOXING_REPO}/releases/tag/binaries",
             )
     except Exception as e:
-        logger.debug("Operation failed: %s", e, exc_info=True)
+        logger.debug("Version check failed: %s", e, exc_info=True)
         return None
 
 
@@ -469,7 +479,7 @@ class BinaryManager:
         return self.cache_dir / f"{self.platform_name}-{b}"
 
     def get_binary_path(self, name: str = "llama-server", backend: Optional[str] = None) -> Path:
-        """Get path to a binary, checking bundled then cache.
+        """Get path to a binary, checking cache then bundled.
 
         Args:
             name: Binary name (e.g., 'llama-server', 'llama-cli')
@@ -478,8 +488,6 @@ class BinaryManager:
         """
         b = backend or self.backend
         binary_name = name if name.endswith(self.binary_extension) else name + self.binary_extension
-
-        bundled_dir = self.get_binary_dir(b)
 
         candidate_names = [binary_name]
         if name == "llama-server":
@@ -490,16 +498,17 @@ class BinaryManager:
                 ]
             )
 
-        for candidate in candidate_names:
-            bundled_path = bundled_dir / candidate
-            if bundled_path.exists():
-                return bundled_path
-
         cache_dir = self.get_cache_dir(b)
         for candidate in candidate_names:
             cache_path = cache_dir / candidate
             if cache_path.exists():
                 return cache_path
+
+        bundled_dir = self.get_binary_dir(b)
+        for candidate in candidate_names:
+            bundled_path = bundled_dir / candidate
+            if bundled_path.exists():
+                return bundled_path
 
         if backend:
             saved = self._requested_backend
@@ -587,8 +596,8 @@ class BinaryManager:
             self._resolved_backend = None
 
     def has_binaries(self) -> bool:
-        """Check if binaries are available (bundled or cached)."""
-        for dir_path in [self.get_binary_dir(), self.get_cache_dir()]:
+        """Check if binaries are available (cache or bundled)."""
+        for dir_path in [self.get_cache_dir(), self.get_binary_dir()]:
             if not dir_path.exists():
                 continue
 
@@ -625,7 +634,7 @@ class BinaryManager:
         """Get all required shared libraries."""
         libs: List[Path] = []
 
-        for dir_path in [self.get_binary_dir(), self.get_cache_dir()]:
+        for dir_path in [self.get_cache_dir(), self.get_binary_dir()]:
             if dir_path.exists():
                 if sys.platform == "win32":
                     libs.extend(dir_path.glob("*.dll"))
@@ -638,7 +647,7 @@ class BinaryManager:
 
     def get_installed_version(self) -> Optional[str]:
         """Get installed binary version."""
-        for version_file in [self.get_binary_dir() / "VERSION", self.get_cache_dir() / "VERSION"]:
+        for version_file in [self.get_cache_dir() / "VERSION", self.get_binary_dir() / "VERSION"]:
             if version_file.exists():
                 content = version_file.read_text().strip()
                 lines = content.split("\n")
@@ -671,12 +680,41 @@ class BinaryManager:
             url = f"https://api.github.com/repos/{repo}/releases/latest"
         else:
             url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
-        req = Request(
-            url, headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "moxing"}
-        )
 
-        with urlopen(req, timeout=30) as response:
-            return json.loads(response.read().decode())
+        token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
+        headers = {
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "moxing",
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        last_error = None
+        for attempt in range(3):
+            try:
+                with httpx.Client(timeout=30, follow_redirects=True) as client:
+                    response = client.get(url, headers=headers)
+                    if response.status_code == 403 and "rate limit" in response.text.lower():
+                        wait = int(response.headers.get("Retry-After", "30"))
+                        logger.debug("Rate limited, waiting %ds (attempt %d/3)", wait, attempt + 1)
+                        time.sleep(wait)
+                        continue
+                    response.raise_for_status()
+                    return response.json()
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if e.response.status_code == 403 and attempt < 2:
+                    time.sleep(10 * (attempt + 1))
+                    continue
+                raise
+            except Exception as e:
+                last_error = e
+                if attempt < 2:
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                raise
+
+        raise RuntimeError(f"Failed to fetch release after 3 attempts: {last_error}")
 
     def find_asset_for_platform(self, assets: List[dict]) -> Optional[dict]:
         """Find the appropriate asset for current platform and backend."""
@@ -1049,36 +1087,59 @@ class BinaryManager:
         return cache_dir
 
     def _download_file(self, url: str, dest: Path, quiet: bool = False):
-        """Download a file with progress."""
-        req = Request(url, headers={"Accept": "application/octet-stream", "User-Agent": "moxing"})
+        """Download a file with progress and proxy support."""
+        last_error = None
+        for attempt in range(3):
+            try:
+                with httpx.stream(
+                    "GET",
+                    url,
+                    headers={"Accept": "application/octet-stream", "User-Agent": "moxing"},
+                    timeout=600,
+                    follow_redirects=True,
+                ) as response:
+                    if response.status_code == 403 and "rate limit" in response.text.lower():
+                        wait = int(response.headers.get("Retry-After", "30"))
+                        logger.debug("Rate limited, waiting %ds (attempt %d/3)", wait, attempt + 1)
+                        time.sleep(wait)
+                        continue
+                    response.raise_for_status()
 
-        with urlopen(req, timeout=600) as response:
-            total = int(response.headers.get("content-length", 0))
+                    total = int(response.headers.get("content-length", 0))
 
-            if quiet:
-                with open(dest, "wb") as f:
-                    f.write(response.read())
-            else:
-                with Progress(
-                    TextColumn("[bold blue]{task.description}"),
-                    BarColumn(),
-                    DownloadColumn(),
-                    TransferSpeedColumn(),
-                    TimeRemainingColumn(),
-                    console=console,
-                ) as progress:
-                    task = progress.add_task("Downloading", total=total)
-                    downloaded = 0
-                    chunk_size = 8192 * 16
+                    if quiet:
+                        with open(dest, "wb") as f:
+                            for chunk in response.iter_bytes(131072):
+                                f.write(chunk)
+                    else:
+                        with Progress(
+                            TextColumn("[bold blue]{task.description}"),
+                            BarColumn(),
+                            DownloadColumn(),
+                            TransferSpeedColumn(),
+                            TimeRemainingColumn(),
+                            console=console,
+                        ) as progress:
+                            task = progress.add_task("Downloading", total=total)
+                            downloaded = 0
+                            with open(dest, "wb") as f:
+                                for chunk in response.iter_bytes(131072):
+                                    f.write(chunk)
+                                    downloaded += len(chunk)
+                                    progress.update(task, completed=downloaded)
+                return
+            except httpx.HTTPStatusError as e:
+                last_error = e
+                if attempt < 2:
+                    time.sleep(5 * (attempt + 1))
+                    continue
+            except Exception as e:
+                last_error = e
+                if attempt < 2:
+                    time.sleep(5 * (attempt + 1))
+                    continue
 
-                    with open(dest, "wb") as f:
-                        while True:
-                            chunk = response.read(chunk_size)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            progress.update(task, completed=downloaded)
+        raise RuntimeError(f"Failed to download after 3 attempts: {last_error}")
 
     def _extract_binaries(self, archive_path: Path, dest_dir: Path, quiet: bool = False):
         """Extract binaries from archive."""
@@ -1153,7 +1214,7 @@ class BinaryManager:
         """List cached binaries."""
         binaries = []
 
-        for dir_path in [self.get_binary_dir(), self.get_cache_dir()]:
+        for dir_path in [self.get_cache_dir(), self.get_binary_dir()]:
             if dir_path.exists():
                 if self.binary_extension:
                     binaries.extend([f.stem for f in dir_path.glob(f"*{self.binary_extension}")])

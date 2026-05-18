@@ -72,6 +72,7 @@ class LlamaCppRunner(BaseRunner):
             cpu_offload_layers=self.config.cpu_offload_layers,
             cpu_moe=self.config.cpu_moe,
             speculative_draft=self.config.speculative_draft,
+            speculative_type=self.config.speculative_type,
             speculative_max=self.config.speculative_max,
             speculative_min=self.config.speculative_min,
             speculative_pmin=self.config.speculative_pmin,
