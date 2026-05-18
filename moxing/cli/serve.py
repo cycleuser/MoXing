@@ -69,7 +69,10 @@ def serve(
         False, "--analyze-cache", help="Show KV cache analysis and exit"
     ),
     speculative_draft: Optional[str] = typer.Option(
-        None, "--draft", help="Draft model path for speculative decoding"
+        None, "--draft", help="Draft model path for speculative decoding (MTP: same model path)"
+    ),
+    speculative_type: str = typer.Option(
+        "", "--spec-type", help="Speculative type: draft-simple, draft-eagle3, draft-mtp, ngram-*"
     ),
     speculative_max: int = typer.Option(
         5, "--draft-max", help="Max draft tokens (speculative decoding)"
@@ -402,6 +405,7 @@ def serve(
                 enforce_eager=enforce_eager,
                 attention_backend=attention_backend,
                 speculative_draft=speculative_draft,
+                speculative_type=speculative_type,
                 speculative_max=speculative_max,
                 verbose=verbose,
             )
@@ -451,6 +455,7 @@ def serve(
                 cpu_offload_layers=cpu_offload,
                 cpu_moe=cpu_moe,
                 speculative_draft=speculative_draft,
+                speculative_type=speculative_type,
                 speculative_max=speculative_max,
                 speculative_min=speculative_min,
                 speculative_pmin=speculative_pmin,

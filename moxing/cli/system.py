@@ -1,4 +1,5 @@
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -20,11 +21,37 @@ def build_binary(
     ),
     jobs: int = typer.Option(8, "-j", "--jobs", help="Parallel jobs"),
     output: Optional[Path] = _OPT_OUTPUT_BIN,
+    repo: Optional[str] = typer.Option(
+        None, "--repo", help="llama.cpp repo URL (default: official)"
+    ),
+    branch: Optional[str] = typer.Option(
+        None, "--branch", help="llama.cpp branch or tag"
+    ),
 ):
-    """Build llama.cpp binaries from source."""
+    """Build llama.cpp binaries from source.
+
+    Clones llama.cpp automatically if not present. Supports all GPU backends.
+    Uses the official llama.cpp repo by default.
+
+    Examples:
+        moxing build -b rocm -j 16                      # Build for ROCm
+        moxing build -b vulkan                           # Build for Vulkan
+        moxing build -b cuda                             # Build for CUDA
+    """
     console.print(f"[blue]Building llama.cpp with {backend} backend...[/blue]")
 
-    llama_cpp_dir = Path(__file__).parent.parent.parent
+    llama_cpp_dir = Path(__file__).parent.parent.parent / "llama.cpp"
+
+    if not (llama_cpp_dir / "CMakeLists.txt").exists():
+        console.print("[yellow]llama.cpp source not found, cloning...[/yellow]")
+        clone_url = repo or "https://github.com/ggml-org/llama.cpp.git"
+        clone_cmd = ["git", "clone", "--depth", "1"]
+        if branch:
+            clone_cmd.extend(["--branch", branch])
+        clone_cmd.extend([clone_url, str(llama_cpp_dir)])
+        subprocess.run(clone_cmd, check=True)
+        console.print("[green]llama.cpp cloned successfully[/green]")
+
     build_dir = llama_cpp_dir / "build"
 
     cmake_args = [
@@ -32,6 +59,8 @@ def build_binary(
         "-B",
         str(build_dir),
         "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_SHARED_LIBS=OFF",
+        "-DGGML_NATIVE=OFF",
     ]
 
     if backend == "vulkan":
@@ -40,21 +69,28 @@ def build_binary(
         cmake_args.append("-DGGML_CUDA=ON")
     elif backend == "rocm":
         cmake_args.append("-DGGML_HIP=ON")
+        cmake_args.append("-DAMDGPU_TARGETS=gfx1100;gfx1030;gfx900")
+    elif backend == "metal":
+        cmake_args.append("-DGGML_METAL=ON")
 
     console.print(f"[dim]Running: {' '.join(cmake_args)}[/dim]")
     subprocess.run(cmake_args, cwd=llama_cpp_dir, check=True)
 
     build_cmd = ["cmake", "--build", str(build_dir), "-j", str(jobs)]
+    console.print(f"[dim]Building with {jobs} jobs...[/dim]")
     subprocess.run(build_cmd, cwd=llama_cpp_dir, check=True)
 
     if output:
-        import shutil
-
         output.mkdir(parents=True, exist_ok=True)
-        for exe in (build_dir / "bin").glob(
-            "llama-*.exe" if sys.platform == "win32" else "llama-*"
-        ):
-            shutil.copy2(exe, output / exe.name)
+        bin_dir = build_dir / "bin"
+        if bin_dir.exists():
+            for exe in bin_dir.glob(
+                "llama-*.exe" if sys.platform == "win32" else "llama-*"
+            ):
+                shutil.copy2(exe, output / exe.name)
+        if sys.platform != "win32":
+            for lib in build_dir.glob("*.so*"):
+                shutil.copy2(lib, output / lib.name)
         console.print(f"[green]Binaries copied to: {output}[/green]")
     else:
         console.print(f"[green]Build complete! Binaries at: {build_dir / 'bin'}[/green]")
@@ -121,6 +157,12 @@ def download_binaries(
 def update_binaries_cmd(
     force: bool = typer.Option(False, "-f", "--force", help="Force update even if up to date"),
     yes: bool = typer.Option(False, "-y", "--yes", help="Auto-confirm update"),
+    backend: str = typer.Option(
+        "auto", "-b", "--backend", help="Backend to download: auto/cuda/rocm/vulkan/cpu/metal"
+    ),
+    all_backends: bool = typer.Option(
+        False, "--all", help="Download binaries for all supported backends"
+    ),
 ):
     """Update llama.cpp binaries to the latest version.
 
@@ -128,19 +170,53 @@ def update_binaries_cmd(
     Supports automatic update detection and one-click updates.
 
     Examples:
-        moxing update-binaries           # Check and update if needed
-        moxing update-binaries -f        # Force re-download
-        moxing update-binaries -f -y     # Force update without confirmation
+        moxing update-binaries                  # Check and update auto-detected backend
+        moxing update-binaries -b rocm          # Update ROCm binaries specifically
+        moxing update-binaries --all            # Download all backend binaries
+        moxing update-binaries -f               # Force re-download
+        moxing update-binaries -f -y -b vulkan  # Force update vulkan without confirmation
 
     Note: Uses bundled binaries as fallback if update fails.
     """
-    from moxing.binaries import clear_skip_update, get_binary_manager
+    from moxing.binaries import (
+        BACKEND_PRIORITY,
+        PlatformDetector,
+        clear_skip_update,
+        get_binary_manager,
+    )
 
     console.print("[blue]Checking for binary updates...[/blue]\n")
 
-    manager = get_binary_manager()
+    if all_backends:
+        os_name = PlatformDetector.get_os()
+        supported = BACKEND_PRIORITY.get(os_name, ["cpu"])
+        console.print(f"[blue]Downloading all backends: {', '.join(supported)}[/blue]\n")
+
+        results = {}
+        for b in supported:
+            console.print(f"[blue]--- Backend: {b} ---[/blue]")
+            try:
+                manager = get_binary_manager(backend=b)
+                clear_skip_update()
+                if force:
+                    manager.download_binaries(force=True, quiet=False, check_updates=False)
+                else:
+                    manager.download_binaries(force=False, quiet=False, check_updates=True)
+                results[b] = "OK"
+                console.print(f"[green]✓ {b} complete[/green]\n")
+            except Exception as e:
+                results[b] = f"FAILED: {e}"
+                console.print(f"[red]✗ {b} failed: {e}[/red]\n")
+
+        console.print("\n[bold]Summary:[/bold]")
+        for b, status in results.items():
+            color = "green" if status == "OK" else "red"
+            console.print(f"  [{color}]{b}: {status}[/{color}]")
+        return
+
     clear_skip_update()
 
+    manager = get_binary_manager(backend=backend)
     has_update, current, latest = manager.check_for_updates()
 
     if not current:
@@ -176,7 +252,9 @@ def update_binaries_cmd(
             manager.download_binaries(force=True, quiet=False, check_updates=False)
             console.print("\n[green bold]✓ Update complete![/green bold]")
             console.print(f"[dim]Installed to: {manager.cache_dir}[/dim]")
-            console.print("\n[dim]Tip: Restart any running servers to use new binaries[/dim]")
+            console.print(
+                "\n[dim]Tip: Restart any running servers to use new binaries[/dim]"
+            )
         except Exception as e:
             console.print(f"[red]Update failed: {e}[/red]")
             console.print("[yellow]Falling back to bundled binaries[/yellow]")

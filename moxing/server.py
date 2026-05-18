@@ -78,6 +78,7 @@ class ServerConfig:
     cpu_offload_layers: int = 0
     cpu_moe: bool = False
     speculative_draft: Optional[str] = None
+    speculative_type: str = ""
     speculative_max: int = 5
     speculative_min: int = 0
     speculative_pmin: float = 0.75
@@ -138,6 +139,7 @@ class LlamaServer:
         prompt_offload: bool = False,
         quiet: bool = False,
         speculative_draft: Optional[str] = None,
+        speculative_type: str = "",
         speculative_max: int = 5,
         speculative_min: int = 0,
         speculative_pmin: float = 0.75,
@@ -204,6 +206,7 @@ class LlamaServer:
         self.extra_args = kwargs
 
         self.speculative_draft = speculative_draft
+        self.speculative_type = speculative_type
         self.speculative_max = speculative_max
         self.speculative_min = speculative_min
         self.speculative_pmin = speculative_pmin
@@ -460,13 +463,13 @@ class LlamaServer:
             if self.n_gpu_layers > 0:
                 args.extend(["-ngl", str(self.n_gpu_layers)])
             else:
-                args.extend(["-ngl", "auto"])
+                args.extend(["-ngl", "999"])
         elif self.n_gpu_layers > 0:
             args.extend(["-ngl", str(self.n_gpu_layers)])
         elif self.n_gpu_layers == 0:
             args.extend(["-ngl", "0"])
         else:
-            args.extend(["-ngl", "auto"])
+            args.extend(["-ngl", "999"])
 
         device_arg = self._resolve_device_arg()
         if device_arg:
@@ -497,11 +500,13 @@ class LlamaServer:
         args.extend(kv_cache_args)
 
         if self.speculative_draft:
-            args.extend(["--draft", self.speculative_draft])
-            args.extend(["--draft-max", str(self.speculative_max)])
+            if self.speculative_type:
+                args.extend(["--spec-type", self.speculative_type])
+            args.extend(["--spec-draft-model", self.speculative_draft])
+            args.extend(["--spec-draft-n-max", str(self.speculative_max)])
             if self.speculative_min > 0:
-                args.extend(["--draft-min", str(self.speculative_min)])
-            args.extend(["--draft-p-min", str(self.speculative_pmin)])
+                args.extend(["--spec-draft-n-min", str(self.speculative_min)])
+            args.extend(["--spec-draft-p-min", str(self.speculative_pmin)])
 
         if self.lookahead > 0:
             args.extend(["--lookahead", str(self.lookahead)])
@@ -563,6 +568,8 @@ class LlamaServer:
         args = []
 
         quant_map = {
+            "f16": "f16",
+            "f32": "f32",
             "q8_0": "q8_0",
             "q5_0": "q5_0",
             "q4_0": "q4_0",
@@ -580,14 +587,39 @@ class LlamaServer:
         }
 
         if self.kv_cache_quant == "auto":
-            from moxing.device import estimate_model_size_gb
+            from moxing.device import DeviceDetector, estimate_model_size_gb
             from moxing.kv_cache import recommend_cache_config
 
             try:
                 model_size_gb = estimate_model_size_gb(str(self.model))
+
+                available_vram_gb = 8.0
+                try:
+                    detector = DeviceDetector()
+                    devices = detector.detect()
+                    backend_str = self.gpu_backend if self.gpu_backend != "auto" else None
+                    gpu_devices = [
+                        d for d in devices if d.backend.is_gpu() and d.free_memory_mb > 0
+                    ]
+                    if self.device and self.device != "auto":
+                        for d in gpu_devices:
+                            if self.device in d.name or f"gpu{d.index}" == self.device:
+                                available_vram_gb = d.free_memory_mb / 1024.0
+                                break
+                    elif backend_str:
+                        for d in gpu_devices:
+                            if d.backend.value == backend_str:
+                                available_vram_gb = d.free_memory_mb / 1024.0
+                                break
+                    elif gpu_devices:
+                        gpu_devices.sort(key=lambda d: d.free_memory_mb, reverse=True)
+                        available_vram_gb = gpu_devices[0].free_memory_mb / 1024.0
+                except Exception:
+                    pass
+
                 config = recommend_cache_config(
                     model_size_gb=model_size_gb,
-                    available_vram_gb=8.0,
+                    available_vram_gb=available_vram_gb,
                     desired_ctx_size=self.ctx_size,
                 )
 
