@@ -3,7 +3,6 @@ Unified runner abstraction for all LLM backends.
 
 Supported runners:
 - llama_cpp: llama.cpp server (GGUF models)
-- ollama: Ollama runner (Ollama model format)
 - vllm: vLLM engine (HuggingFace/GGUF models)
 """
 
@@ -147,12 +146,8 @@ def get_runner_class(runner_type: str) -> type:
         from moxing.runners.vllm import VLLMRunner
 
         return VLLMRunner
-    elif runner_type == "ollama":
-        from moxing.runners.ollama import OllamaRunner
-
-        return OllamaRunner
     else:
-        raise ValueError(f"Unknown runner type: {runner_type}. Supported: llama_cpp, vllm, ollama")
+        raise ValueError(f"Unknown runner type: {runner_type}. Supported: llama_cpp, vllm")
 
 
 def create_runner(
@@ -172,13 +167,9 @@ def detect_best_runner(
 
     Priority:
     1. If model is GGUF file -> llama_cpp
-    2. If model is ollama: prefix or Ollama model -> ollama
-    3. If model is HuggingFace repo -> vllm (if available) else llama_cpp
-    4. Default -> llama_cpp
+    2. If model is HuggingFace repo -> vllm (if available) else llama_cpp
+    3. Default -> llama_cpp
     """
-    if model_name.startswith("ollama:"):
-        return "ollama"
-
     if model_path and model_path.exists():
         if model_path.suffix == ".gguf" or str(model_path).endswith(".gguf"):
             return "llama_cpp"

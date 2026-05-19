@@ -3,7 +3,6 @@ Unified runner package for MoXing.
 
 Supports:
 - llama_cpp: llama.cpp server (GGUF models)
-- ollama: Ollama runner (Ollama model format)
 - vllm: vLLM engine (HuggingFace/GGUF models)
 """
 
