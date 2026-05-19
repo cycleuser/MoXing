@@ -24,9 +24,7 @@ def build_binary(
     repo: Optional[str] = typer.Option(
         None, "--repo", help="llama.cpp repo URL (default: official)"
     ),
-    branch: Optional[str] = typer.Option(
-        None, "--branch", help="llama.cpp branch or tag"
-    ),
+    branch: Optional[str] = typer.Option(None, "--branch", help="llama.cpp branch or tag"),
 ):
     """Build llama.cpp binaries from source.
 
@@ -84,9 +82,7 @@ def build_binary(
         output.mkdir(parents=True, exist_ok=True)
         bin_dir = build_dir / "bin"
         if bin_dir.exists():
-            for exe in bin_dir.glob(
-                "llama-*.exe" if sys.platform == "win32" else "llama-*"
-            ):
+            for exe in bin_dir.glob("llama-*.exe" if sys.platform == "win32" else "llama-*"):
                 shutil.copy2(exe, output / exe.name)
         if sys.platform != "win32":
             for lib in build_dir.glob("*.so*"):
@@ -252,9 +248,7 @@ def update_binaries_cmd(
             manager.download_binaries(force=True, quiet=False, check_updates=False)
             console.print("\n[green bold]✓ Update complete![/green bold]")
             console.print(f"[dim]Installed to: {manager.cache_dir}[/dim]")
-            console.print(
-                "\n[dim]Tip: Restart any running servers to use new binaries[/dim]"
-            )
+            console.print("\n[dim]Tip: Restart any running servers to use new binaries[/dim]")
         except Exception as e:
             console.print(f"[red]Update failed: {e}[/red]")
             console.print("[yellow]Falling back to bundled binaries[/yellow]")

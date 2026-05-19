@@ -1,9 +1,8 @@
 """
 Binary management for moxing.
 
-Binaries are downloaded on first use from GitHub releases:
-1. https://github.com/cycleuser/MoXing/releases/tag/binaries (primary)
-2. https://github.com/ggml-org/llama.cpp/releases (fallback)
+Binaries are downloaded from official llama.cpp GitHub releases:
+    https://github.com/ggml-org/llama.cpp/releases
 
 Binary loading priority:
     1. Bundled binaries: moxing/bin/{os}-{arch}-{backend}/
@@ -46,7 +45,6 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
-MOXING_REPO = "cycleuser/MoXing"
 LLAMA_CPP_REPO = "ggml-org/llama.cpp"
 CACHE_DIR = Path.home() / ".cache" / "moxing" / "binaries"
 BIN_DIR = Path(__file__).parent / "bin"
@@ -86,13 +84,6 @@ class BinaryInfo:
     platform: str
     backend: str
     path: Path
-
-
-@dataclass
-class VersionInfo:
-    moxing_version: Optional[str]
-    llama_cpp_version: Optional[str]
-    release_url: Optional[str]
 
 
 class PlatformDetector:
@@ -288,43 +279,6 @@ def get_latest_llama_cpp_version() -> Optional[str]:
         return None
 
 
-def get_moxing_binaries_release() -> Optional[VersionInfo]:
-    """Get version info from moxing binaries release."""
-    try:
-        url = f"https://api.github.com/repos/{MOXING_REPO}/releases/tags/binaries"
-        headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "moxing"}
-        token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-
-        with httpx.Client(timeout=10, follow_redirects=True) as client:
-            response = client.get(url, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-
-            body = data.get("body", "")
-            moxing_version = None
-            llama_cpp_version = None
-
-            for line in body.split("\n"):
-                if line.startswith("llama.cpp:"):
-                    llama_cpp_version = line.split(":", 1)[1].strip()
-                elif line.startswith("moxing:"):
-                    moxing_version = line.split(":", 1)[1].strip()
-
-            if not llama_cpp_version:
-                llama_cpp_version = data.get("tag_name", "").replace("binaries-", "")
-
-            return VersionInfo(
-                moxing_version=moxing_version,
-                llama_cpp_version=llama_cpp_version,
-                release_url=f"https://github.com/{MOXING_REPO}/releases/tag/binaries",
-            )
-    except Exception as e:
-        logger.debug("Version check failed: %s", e, exc_info=True)
-        return None
-
-
 def should_check_for_updates() -> bool:
     """Check if we should check for binary updates."""
     if os.environ.get("MOXING_NO_UPDATE_CHECK") == "1":
@@ -345,31 +299,20 @@ def clear_skip_update():
         SKIP_UPDATE_FILE.unlink()
 
 
-RUNNER_TYPES = ["official", "ollama", "patched"]
-
-
 class BinaryManager:
     """
     Manage llama.cpp binaries with bundled support.
 
     Priority:
-    1. Bundled binaries in moxing/bin/{runner}-{os}-{arch}-{backend}/
+    1. Bundled binaries in moxing/bin/{os}-{arch}-{backend}/
     2. Cached binaries in ~/.cache/moxing/binaries/{os}-{arch}-{backend}/
-    3. Download from GitHub releases
-
-    Runner types:
-    - official: Official llama.cpp binaries (latest models support)
-    - ollama: Ollama patched binaries (extra model support)
-    - patched: MoXing patched binaries
+    3. Download from llama.cpp GitHub releases
     """
 
-    def __init__(
-        self, backend: str = "auto", runner: str = "official", cache_dir: Optional[Path] = None
-    ):
+    def __init__(self, backend: str = "auto", cache_dir: Optional[Path] = None):
         self.cache_dir = cache_dir or CACHE_DIR
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._requested_backend = backend
-        self._runner_type = runner if runner in RUNNER_TYPES else "official"
         self._resolved_backend: Optional[str] = None
 
     @property
@@ -415,15 +358,7 @@ class BinaryManager:
         return False
 
     def _get_possible_dir_names(self, backend: str) -> List[str]:
-        """Get possible directory names for a backend, ordered by priority."""
-        names = []
-        if self._runner_type:
-            names.append(f"{self._runner_type}-{self.platform_name}-{backend}")
-        names.append(f"{self.platform_name}-{backend}")
-        for rt in RUNNER_TYPES:
-            if rt != self._runner_type:
-                names.append(f"{rt}-{self.platform_name}-{backend}")
-        return names
+        return [f"{self.platform_name}-{backend}"]
 
     def list_bundled_backends(self) -> List[str]:
         """List all bundled backends for current platform."""
@@ -431,27 +366,15 @@ class BinaryManager:
         if not BIN_DIR.exists():
             return backends
 
-        patterns = [
-            f"{self._runner_type}-{self.platform_name}-",
-            f"{self.platform_name}-",
-        ]
-        for rt in RUNNER_TYPES:
-            if rt != self._runner_type:
-                patterns.append(f"{rt}-{self.platform_name}-")
-
-        seen_backends = set()
+        pattern = f"{self.platform_name}-"
         for d in BIN_DIR.iterdir():
             if not d.is_dir():
                 continue
-            for pattern in patterns:
-                if d.name.startswith(pattern):
-                    backend = d.name[len(pattern) :]
-                    if backend not in seen_backends:
-                        server = d / f"llama-server{self.binary_extension}"
-                        if server.exists():
-                            backends.append(backend)
-                            seen_backends.add(backend)
-                    break
+            if d.name.startswith(pattern):
+                backend = d.name[len(pattern) :]
+                server = d / f"llama-server{self.binary_extension}"
+                if server.exists():
+                    backends.append(backend)
 
         return backends
 
@@ -462,16 +385,10 @@ class BinaryManager:
         for dir_name in dir_names:
             path = BIN_DIR / dir_name
             if path.exists():
-                server_names = [
-                    f"llama-server{self.binary_extension}",
-                    f"ollama-runner-{b}{self.binary_extension}",
-                    f"ollama-runner{self.binary_extension}",
-                ]
-                for server_name in server_names:
-                    server = path / server_name
-                    if server.exists():
-                        return path
-        return BIN_DIR / f"{self._runner_type}-{self.platform_name}-{b}"
+                server = path / f"llama-server{self.binary_extension}"
+                if server.exists():
+                    return path
+        return BIN_DIR / f"{self.platform_name}-{b}"
 
     def get_cache_dir(self, backend: Optional[str] = None) -> Path:
         """Get the cache directory for a backend."""
@@ -489,26 +406,15 @@ class BinaryManager:
         b = backend or self.backend
         binary_name = name if name.endswith(self.binary_extension) else name + self.binary_extension
 
-        candidate_names = [binary_name]
-        if name == "llama-server":
-            candidate_names.extend(
-                [
-                    f"ollama-runner-{b}{self.binary_extension}",
-                    f"ollama-runner{self.binary_extension}",
-                ]
-            )
-
         cache_dir = self.get_cache_dir(b)
-        for candidate in candidate_names:
-            cache_path = cache_dir / candidate
-            if cache_path.exists():
-                return cache_path
+        cache_path = cache_dir / binary_name
+        if cache_path.exists():
+            return cache_path
 
         bundled_dir = self.get_binary_dir(b)
-        for candidate in candidate_names:
-            bundled_path = bundled_dir / candidate
-            if bundled_path.exists():
-                return bundled_path
+        bundled_path = bundled_dir / binary_name
+        if bundled_path.exists():
+            return bundled_path
 
         if backend:
             saved = self._requested_backend
@@ -716,19 +622,6 @@ class BinaryManager:
 
         raise RuntimeError(f"Failed to fetch release after 3 attempts: {last_error}")
 
-    def find_asset_for_platform(self, assets: List[dict]) -> Optional[dict]:
-        """Find the appropriate asset for current platform and backend."""
-        platform_backend = f"{self.platform_name}-{self.backend}"
-
-        for asset in assets:
-            name = asset["name"].lower()
-            if (platform_backend.replace("-", "_") in name or platform_backend in name) and (
-                name.endswith((".zip", ".tar.gz", ".tgz"))
-            ):
-                return asset
-
-        return None
-
     def find_llama_cpp_asset(self, assets: List[dict]) -> Optional[dict]:
         """Find asset from llama.cpp releases."""
         os_name = PlatformDetector.get_os()
@@ -846,21 +739,6 @@ class BinaryManager:
         if not current:
             return False, None, None
 
-        latest: Optional[str] = None
-
-        moxing_info = get_moxing_binaries_release()
-        if moxing_info and moxing_info.llama_cpp_version:
-            latest = moxing_info.llama_cpp_version
-            # Compare build numbers numerically (e.g., b8475 vs b8461)
-            try:
-                current_num = int(current.replace("b", ""))
-                latest_num = int(latest.replace("b", ""))
-                if latest_num > current_num:
-                    return True, current, latest
-            except (ValueError, AttributeError):
-                if current != latest:
-                    return True, current, latest
-
         latest = get_latest_llama_cpp_version()
         if latest:
             try:
@@ -910,8 +788,7 @@ class BinaryManager:
     def download_binaries(
         self, force: bool = False, quiet: bool = False, check_updates: bool = True
     ) -> Path:
-        """Download binaries with priority:
-        MoXing patched -> llama.cpp official -> MoXing fallback."""
+        """Download binaries directly from official llama.cpp GitHub releases."""
 
         if not force and self.has_binaries():
             if check_updates and should_check_for_updates():
@@ -943,109 +820,36 @@ class BinaryManager:
         if not quiet:
             console.print(f"[blue]Downloading llama.cpp binaries for {self.backend}...[/blue]")
 
-        try:
-            release = self.get_release(MOXING_REPO, "binaries-patched")
-            tag = release.get("tag_name", "binaries-patched")
-            body = release.get("body", "")
+        release = self.get_release(LLAMA_CPP_REPO, "latest")
+        tag = release["tag_name"]
+        asset = self.find_llama_cpp_asset(release["assets"])
 
-            llama_version = None
-            patched_info = None
-            for line in body.split("\n"):
-                if line.startswith("llama.cpp:"):
-                    llama_version = line.split(":", 1)[1].strip()
-                elif line.startswith("patches:"):
-                    patched_info = line.split(":", 1)[1].strip()
+        if not asset:
+            raise RuntimeError(
+                f"No matching binary found for {self.platform_name} ({self.backend}) "
+                f"in llama.cpp release {tag}"
+            )
 
-            if not llama_version:
-                llama_version = tag
-
-            asset = self.find_asset_for_platform(release["assets"])
-
-            if asset:
-                download_url = asset["browser_download_url"]
-                asset_name = asset["name"]
-
-                if not quiet:
-                    console.print("[blue]MoXing patched release (recommended)[/blue]")
-                    console.print(f"[blue]llama.cpp: {llama_version}[/blue]")
-                    if patched_info:
-                        console.print(f"[blue]Patches: {patched_info}[/blue]")
-                    console.print(f"[blue]Asset: {asset_name}[/blue]")
-
-                cache_dir = self._do_download(
-                    download_url, asset_name, f"{llama_version}-patched", quiet, patched=True
-                )
-                return cache_dir
-        except Exception as e:
-            logger.debug("Binary download failed: %s", e, exc_info=True)
-            if not quiet:
-                console.print(f"[yellow]MoXing patched release not available: {e}[/yellow]")
-
-        try:
-            release = self.get_release(LLAMA_CPP_REPO, "latest")
-            tag = release["tag_name"]
-            asset = self.find_llama_cpp_asset(release["assets"])
-
-            if asset:
-                download_url = asset["browser_download_url"]
-                asset_name = asset["name"]
-
-                if not quiet:
-                    console.print("[blue]Official llama.cpp release[/blue]")
-                    console.print(f"[blue]Version: {tag}[/blue]")
-                    console.print(f"[blue]Asset: {asset_name}[/blue]")
-
-                cache_dir = self._do_download(download_url, asset_name, tag, quiet)
-
-                if PlatformDetector.get_os() == "windows" and self.backend == "cuda":
-                    cudart_asset = self._find_cudart_asset(release["assets"])
-                    if cudart_asset:
-                        if not quiet:
-                            console.print("[blue]Downloading CUDA runtime DLLs...[/blue]")
-                        self._do_download(
-                            cudart_asset["browser_download_url"], cudart_asset["name"], tag, quiet
-                        )
-
-                return cache_dir
-        except Exception as e:
-            logger.debug("Binary download failed: %s", e, exc_info=True)
-            if not quiet:
-                console.print(f"[yellow]llama.cpp release download failed: {e}[/yellow]")
+        download_url = asset["browser_download_url"]
+        asset_name = asset["name"]
 
         if not quiet:
-            console.print("[blue]Trying MoXing releases as fallback...[/blue]")
+            console.print("[blue]Official llama.cpp release[/blue]")
+            console.print(f"[blue]Version: {tag}[/blue]")
+            console.print(f"[blue]Asset: {asset_name}[/blue]")
 
-        try:
-            release = self.get_release(MOXING_REPO, "binaries")
-            tag = release.get("tag_name", "binaries")
+        cache_dir = self._do_download(download_url, asset_name, tag, quiet)
 
-            body = release.get("body", "")
-            llama_version = None
-            for line in body.split("\n"):
-                if line.startswith("llama.cpp:"):
-                    llama_version = line.split(":", 1)[1].strip()
-                    break
-
-            if not llama_version:
-                llama_version = tag.replace("binaries-", "") if tag.startswith("binaries-") else tag
-
-            asset = self.find_asset_for_platform(release["assets"])
-
-            if asset:
-                download_url = asset["browser_download_url"]
-                asset_name = asset["name"]
-
+        if PlatformDetector.get_os() == "windows" and self.backend == "cuda":
+            cudart_asset = self._find_cudart_asset(release["assets"])
+            if cudart_asset:
                 if not quiet:
-                    console.print(f"[blue]Found: {asset_name}[/blue]")
-                    console.print(f"[blue]llama.cpp version: {llama_version}[/blue]")
+                    console.print("[blue]Downloading CUDA runtime DLLs...[/blue]")
+                self._do_download(
+                    cudart_asset["browser_download_url"], cudart_asset["name"], tag, quiet
+                )
 
-                return self._do_download(download_url, asset_name, llama_version, quiet)
-        except Exception as e:
-            logger.debug("Binary download failed: %s", e, exc_info=True)
-            if not quiet:
-                console.print(f"[yellow]MoXing release not found: {e}[/yellow]")
-
-        raise RuntimeError(f"No binary found for {self.platform_name} ({self.backend})")
+        return cache_dir
 
     def _find_cudart_asset(self, assets: List[dict]) -> Optional[dict]:
         """Find CUDA runtime DLLs asset for Windows."""
@@ -1061,13 +865,10 @@ class BinaryManager:
         asset_name: str,
         tag: str,
         quiet: bool = False,
-        patched: bool = False,
     ) -> Path:
         """Perform the actual download and extraction."""
         if not quiet:
             console.print(f"[blue]Release: {tag}[/blue]")
-            if patched:
-                console.print("[blue]Source: MoXing patched release (with Ollama patches)[/blue]")
             console.print(f"[blue]Backend: {self.backend}[/blue]")
             console.print(f"[blue]Downloading: {asset_name}[/blue]")
 
@@ -1233,25 +1034,25 @@ class BinaryManager:
 _binary_manager: Optional[BinaryManager] = None
 
 
-def get_binary_manager(backend: str = "auto", runner: str = "official") -> BinaryManager:
+def get_binary_manager(backend: str = "auto") -> BinaryManager:
     """Get the global binary manager instance."""
     global _binary_manager
-    if _binary_manager is None or backend != "auto" or runner != "official":
-        _binary_manager = BinaryManager(backend=backend, runner=runner)
+    if _binary_manager is None or backend != "auto":
+        _binary_manager = BinaryManager(backend=backend)
     return _binary_manager
 
 
-def ensure_binaries(backend: str = "auto", runner: str = "official") -> Path:
+def ensure_binaries(backend: str = "auto") -> Path:
     """Ensure binaries are available, return path to binary directory."""
-    manager = get_binary_manager(backend, runner)
+    manager = get_binary_manager(backend)
     if not manager.has_binaries():
         manager.download_binaries(quiet=False)
     return manager.get_cache_dir()
 
 
-def get_server_binary(backend: str = "auto", runner: str = "official") -> Path:
+def get_server_binary(backend: str = "auto") -> Path:
     """Get path to llama-server binary."""
-    manager = get_binary_manager(backend, runner)
+    manager = get_binary_manager(backend)
     return manager.get_binary_path("llama-server")
 
 
