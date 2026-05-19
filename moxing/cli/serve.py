@@ -38,7 +38,7 @@ def serve(
         help="Device: auto, gpu0, gpu1, cpu (use 'moxing devices' to list)",
     ),
     runner: str = typer.Option(
-        "auto", "-r", "--runner", help="Runner engine: auto, llama_cpp, vllm, ollama"
+        "auto", "-r", "--runner", help="Runner engine: auto, llama_cpp, vllm"
     ),
     auto: bool = typer.Option(True, "--auto/--no-auto", help="Auto-detect best device"),
     auto_port: bool = typer.Option(False, "-a", "--auto-port", help="Auto-find available port"),
@@ -157,7 +157,6 @@ def serve(
     - auto: Auto-detect best runner (llama_cpp for GGUF, vllm for HF repos)
     - llama_cpp: llama.cpp server (GGUF models, all backends)
     - vllm: vLLM engine (HuggingFace/GGUF, CUDA/ROCm only, higher throughput)
-    - ollama: Ollama runner (Ollama model format)
 
     Host Binding:
     - 127.0.0.1 (default): Local access only
@@ -224,7 +223,7 @@ def serve(
     - Extended context: moxing serve model.gguf --rope-scaling yarn --rope-scale 4
     - LAN access: moxing serve model.gguf --host 0.0.0.0
     """
-    from moxing.cli.ollama_cmds import ollama_serve_impl
+    from moxing.cli.ollama_cmds import serve_with_ollama_backend
     from moxing.gguf_check import GGUFParser
     from moxing.gguf_compress import is_gguf_compressed, resolve_model_path
     from moxing.mlx_server import MLXServer
@@ -238,14 +237,8 @@ def serve(
 
     if model.startswith("ollama:"):
         ollama_model = model[7:]
-        ollama_serve_impl(
-            ollama_model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor
-        )
-        return
-
-    if backend == "ollama":
-        ollama_serve_impl(
-            model, port, host, ctx_size, device, backend, auto_port, verbose, web_monitor
+        serve_with_ollama_backend(
+            ollama_model, port, host, ctx_size, device, backend, verbose
         )
         return
 

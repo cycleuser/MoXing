@@ -651,11 +651,8 @@ class LlamaServer:
                 cmdline_str = " ".join(cmdline)
 
                 is_llama = name == "llama-server" or "llama-server" in cmdline_str
-                is_ollama_runner = (
-                    name == "ollama" or name == "runner" or "ollama runner" in cmdline_str
-                )
 
-                if not (is_llama or is_ollama_runner):
+                if not is_llama:
                     continue
 
                 if target_device and target_backend:

@@ -46,6 +46,8 @@ console = Console()
 
 
 LLAMA_CPP_REPO = "ggml-org/llama.cpp"
+MOXING_BINARIES_REPO = "cycleuser/MoXing"
+MOXING_BINARIES_TAG = "binaries"
 CACHE_DIR = Path.home() / ".cache" / "moxing" / "binaries"
 BIN_DIR = Path(__file__).parent / "bin"
 CONFIG_DIR = Path.home() / ".config" / "moxing"
@@ -444,13 +446,18 @@ class BinaryManager:
 
             if sys.platform == "win32":
                 libs = list(dir_path.glob("*.dll"))
+                if len(libs) < 1:
+                    continue
             elif sys.platform == "darwin":
                 libs = list(dir_path.glob("*.dylib"))
+                if len(libs) < 1:
+                    continue
             else:
                 libs = list(dir_path.glob("*.so*"))
+                if len(libs) == 0 and server.stat().st_size < 1024 * 1024:
+                    continue
 
-            if len(libs) >= 1:
-                return True
+            return True
 
         return False
 
@@ -513,13 +520,18 @@ class BinaryManager:
 
             if sys.platform == "win32":
                 libs = list(dir_path.glob("*.dll"))
+                if len(libs) < 1:
+                    continue
             elif sys.platform == "darwin":
                 libs = list(dir_path.glob("*.dylib"))
+                if len(libs) < 1:
+                    continue
             else:
                 libs = list(dir_path.glob("*.so*"))
+                if len(libs) == 0 and server.stat().st_size < 1024 * 1024:
+                    continue
 
-            if len(libs) >= 3:
-                return True
+            return True
 
         return False
 
@@ -623,10 +635,11 @@ class BinaryManager:
         raise RuntimeError(f"Failed to fetch release after 3 attempts: {last_error}")
 
     def find_llama_cpp_asset(self, assets: List[dict]) -> Optional[dict]:
-        """Find asset from llama.cpp releases."""
+        """Find asset from llama.cpp or MoXing binary releases."""
         os_name = PlatformDetector.get_os()
         arch = PlatformDetector.get_arch()
         backend = self.backend
+        expected_name = f"{self.platform_name}-{backend}"
 
         candidates = []
 
@@ -643,6 +656,12 @@ class BinaryManager:
                 continue
 
             if "openeuler" in name or "310p" in name or "910b" in name or "s390x" in name:
+                continue
+
+            if name.startswith(expected_name.lower()) or name.startswith(
+                expected_name.lower().replace(f"-{backend}", f"-{backend}-")
+            ):
+                candidates.append((asset, 100, name))
                 continue
 
             os_match = False
@@ -788,7 +807,7 @@ class BinaryManager:
     def download_binaries(
         self, force: bool = False, quiet: bool = False, check_updates: bool = True
     ) -> Path:
-        """Download binaries directly from official llama.cpp GitHub releases."""
+        """Download binaries from MoXing releases or official llama.cpp."""
 
         if not force and self.has_binaries():
             if check_updates and should_check_for_updates():
@@ -818,24 +837,39 @@ class BinaryManager:
             return self._do_download(download_url, asset_name, tag, quiet)
 
         if not quiet:
-            console.print(f"[blue]Downloading llama.cpp binaries for {self.backend}...[/blue]")
+            console.print(f"[blue]Downloading binaries for {self.backend}...[/blue]")
 
-        release = self.get_release(LLAMA_CPP_REPO, "latest")
-        tag = release["tag_name"]
-        asset = self.find_llama_cpp_asset(release["assets"])
+        release = None
+        tag = None
+        asset = None
+
+        try:
+            release = self.get_release(MOXING_BINARIES_REPO, MOXING_BINARIES_TAG)
+            tag = MOXING_BINARIES_TAG
+            asset = self.find_llama_cpp_asset(release.get("assets", []))
+            if asset and not quiet:
+                console.print("[blue]Using MoXing self-built binaries[/blue]")
+        except Exception:
+            if not quiet:
+                console.print("[dim]MoXing release not found, trying official...[/dim]")
+
+        if not asset:
+            release = self.get_release(LLAMA_CPP_REPO, "latest")
+            tag = release["tag_name"]
+            asset = self.find_llama_cpp_asset(release.get("assets", []))
+            if not quiet:
+                console.print("[blue]Using official llama.cpp release[/blue]")
 
         if not asset:
             raise RuntimeError(
-                f"No matching binary found for {self.platform_name} ({self.backend}) "
-                f"in llama.cpp release {tag}"
+                f"No matching binary found for {self.platform_name} ({self.backend})"
             )
 
         download_url = asset["browser_download_url"]
         asset_name = asset["name"]
 
         if not quiet:
-            console.print("[blue]Official llama.cpp release[/blue]")
-            console.print(f"[blue]Version: {tag}[/blue]")
+            console.print(f"[blue]Release: {tag}[/blue]")
             console.print(f"[blue]Asset: {asset_name}[/blue]")
 
         cache_dir = self._do_download(download_url, asset_name, tag, quiet)

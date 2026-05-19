@@ -42,9 +42,9 @@ BACKEND_DEPENDENCIES = {
             "git",
             "libssl-dev",
             "libvulkan-dev",
-            "libspirv-dev",
+            "glslang-dev",
             "glslang-tools",
-            "shaderc",
+            "libshaderc-dev",
             "pkg-config",
         ],
         "description": "Cross-vendor GPU via Vulkan",
@@ -160,9 +160,11 @@ def _detect_gpu_arch(backend: str) -> Optional[str]:
             if result.returncode == 0:
                 archs = set()
                 for line in result.stdout.decode().split("\n"):
-                    line = line.strip()
-                    if line.startswith("Name:") and "gfx" in line:
-                        archs.add(line.split(":")[1].strip())
+                    m = re.search(r"gfx(\d+)", line)
+                    if m:
+                        name = m.group()
+                        if "generic" not in line.lower():
+                            archs.add(name)
                 if archs:
                     return ";".join(sorted(archs))
         except Exception:
@@ -288,6 +290,7 @@ def _build_cmake_args(
     if backend == "rocm":
         arch = gpu_arch or LINUX_AMDGPU_TARGETS
         args.append(f"-DAMDGPU_TARGETS={arch}")
+        args.append(f"-DCMAKE_HIP_ARCHITECTURES={arch}")
         rocm_path = Path("/opt/rocm")
         if rocm_path.exists():
             args.append(f"-DCMAKE_PREFIX_PATH={rocm_path}")
@@ -308,16 +311,16 @@ def _build_cmake_args(
 def _copy_build_outputs(build_dir: Path, output_dir: Path, backend: str) -> List[str]:
     copied: List[str] = []
     bin_dir = build_dir / "bin"
+    strip = shutil.which("strip")
 
     if bin_dir.exists():
         for exe in bin_dir.iterdir():
             if exe.is_file():
                 name = exe.name
-                is_binary = any(name.startswith(b) for b in ESSENTIAL_BINARIES_BUILD)
-                is_binary = is_binary or name.startswith("llama-")
-                is_binary = is_binary and not name.endswith((".txt", ".md", ".json"))
-                if is_binary or name == "main":
+                if any(name.startswith(b) for b in ESSENTIAL_BINARIES_BUILD):
                     shutil.copy2(exe, output_dir / name)
+                    if strip:
+                        subprocess.run([strip, str(output_dir / name)], capture_output=True)
                     os.chmod(output_dir / name, 0o755)
                     copied.append(name)
 
@@ -500,10 +503,20 @@ def build_binary(
         else:
             console.print("[yellow]No binaries found to copy[/yellow]")
     else:
-        console.print(f"\n[dim]Binaries at: {bin_dir}[/dim]")
+        from moxing.binaries import CACHE_DIR, PlatformDetector
 
-    console.print("\n[dim]To install into MoXing cache, copy binaries to:[/dim]")
-    console.print("[dim]  ~/.cache/moxing/binaries/[/dim]")
+        platform_name = PlatformDetector.get_platform_name()
+        cache_dir = CACHE_DIR / f"{platform_name}-{backend}"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        copied = _copy_build_outputs(build_dir, cache_dir, backend)
+        (cache_dir / "VERSION").write_text(f"local-build-{backend}\n{backend}\n")
+        if copied:
+            console.print(f"\n[green]Installed {len(copied)} files to cache:[/green]")
+            console.print(f"  [dim]{cache_dir}[/dim]")
+            for name in copied:
+                console.print(f"  [green]✓[/green] {name}")
+        else:
+            console.print("[yellow]No binaries found to copy[/yellow]")
 
 
 def download_binaries(
