@@ -66,7 +66,6 @@ class LlamaCppRunner(BaseRunner):
             n_gpu_layers=device_config.n_gpu_layers,
             device=device_config.device_str,
             gpu_backend=device_config.backend,
-            runner="official",
             kv_cache_quant=self.config.kv_cache_quant,
             cpu_offload=self.config.cpu_offload,
             cpu_offload_layers=self.config.cpu_offload_layers,

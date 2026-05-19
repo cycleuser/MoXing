@@ -509,7 +509,6 @@ def ollama_run(
             n_gpu_layers=device_config.n_gpu_layers,
             device=device_str,
             gpu_backend=device_config.backend.value,
-            runner="ollama",
             kv_cache_quant=kv_cache,
             quiet=False,
         )

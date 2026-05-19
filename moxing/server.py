@@ -105,11 +105,11 @@ class ServerConfig:
     tune_config: Optional[Dict[str, Any]] = None
 
 
-def _find_binary(backend: str = "auto", runner: str = "official") -> Path:
+def _find_binary(backend: str = "auto") -> Path:
     """Find llama-server binary using BinaryManager."""
     from moxing.binaries import get_binary_manager
 
-    manager = get_binary_manager(backend, runner)
+    manager = get_binary_manager(backend)
     if not manager.has_binaries():
         console.print(f"[blue]Downloading llama.cpp binaries for {manager.backend}...[/blue]")
         manager.download_binaries()
@@ -130,7 +130,6 @@ class LlamaServer:
         n_cpu_layers: int = 0,
         device: str = "auto",
         gpu_backend: str = "auto",
-        runner: str = "official",
         auto_ctx: bool = True,
         kv_cache_quant: str = "auto",
         cpu_offload: bool = False,
@@ -188,7 +187,6 @@ class LlamaServer:
         self.n_cpu_layers = n_cpu_layers
         self.device = device
         self.gpu_backend = gpu_backend
-        self.runner = runner
         self.auto_ctx = auto_ctx
         self.kv_cache_quant = kv_cache_quant
         self.cpu_offload = cpu_offload
@@ -302,13 +300,13 @@ class LlamaServer:
             self.ctx_size = 4096
 
     @staticmethod
-    def get_binary_path(backend: str = "auto", runner: str = "official") -> Path:
+    def get_binary_path(backend: str = "auto") -> Path:
         """Get the path to the llama-server binary for current platform."""
-        return _find_binary(backend, runner)
+        return _find_binary(backend)
 
     def _get_binary_for_backend(self) -> Path:
         """Get the correct binary for the configured backend."""
-        return _find_binary(self.gpu_backend, self.runner)
+        return _find_binary(self.gpu_backend)
 
     @staticmethod
     def detect_gpus() -> List[GPUInfo]:
