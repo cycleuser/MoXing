@@ -1,9 +1,10 @@
+import os
 import platform
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 from rich.console import Console
@@ -14,29 +15,418 @@ _OPT_OUTPUT_BIN = typer.Option(None, "-o", "--output", help="Output directory fo
 
 console = Console()
 
+BACKEND_DEPENDENCIES = {
+    "cpu": {
+        "apt": [
+            "build-essential",
+            "cmake",
+            "git",
+            "libssl-dev",
+        ],
+        "description": "CPU only (no GPU)",
+    },
+    "cuda": {
+        "apt": [
+            "build-essential",
+            "cmake",
+            "git",
+            "libssl-dev",
+        ],
+        "extra": "NVIDIA CUDA Toolkit (nvidia-cuda-toolkit or from https://developer.nvidia.com/cuda-downloads)",
+        "description": "NVIDIA GPU via CUDA",
+    },
+    "vulkan": {
+        "apt": [
+            "build-essential",
+            "cmake",
+            "git",
+            "libssl-dev",
+            "libvulkan-dev",
+            "libspirv-dev",
+            "glslang-tools",
+            "shaderc",
+            "pkg-config",
+        ],
+        "description": "Cross-vendor GPU via Vulkan",
+    },
+    "rocm": {
+        "apt": [
+            "build-essential",
+            "cmake",
+            "git",
+            "libssl-dev",
+        ],
+        "extra": "AMD ROCm (from https://rocm.docs.amd.com/projects/install-on-linux/en/latest/)",
+        "description": "AMD GPU via ROCm/HIP",
+    },
+    "metal": {
+        "apt": [],
+        "brew": ["cmake", "git"],
+        "description": "Apple Metal (macOS only)",
+    },
+    "sycl": {
+        "apt": [
+            "build-essential",
+            "cmake",
+            "git",
+            "libssl-dev",
+        ],
+        "extra": "Intel oneAPI Base Toolkit (from https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html)",
+        "description": "Intel GPU via SYCL",
+    },
+}
+
+BACKEND_CMAKE_FLAGS = {
+    "cpu": [],
+    "cuda": ["-DGGML_CUDA=ON"],
+    "vulkan": ["-DGGML_VULKAN=ON"],
+    "rocm": ["-DGGML_HIP=ON"],
+    "metal": ["-DGGML_METAL=ON"],
+    "sycl": ["-DGGML_SYCL=ON", "-DCMAKE_C_COMPILER=icx", "-DCMAKE_CXX_COMPILER=icpx"],
+}
+
+LINUX_AMDGPU_TARGETS = (
+    "gfx900;gfx906;gfx908;gfx90a;gfx942;gfx1030;gfx1031;gfx1032;gfx1100;gfx1101;gfx1102;gfx1103"
+)
+
+ESSENTIAL_BINARIES_BUILD = [
+    "llama-server",
+    "llama-cli",
+    "llama-mtmd-cli",
+    "llama-bench",
+    "llama-quantize",
+]
+
+
+def _check_command_exists(cmd: str) -> bool:
+    try:
+        result = subprocess.run(["which", cmd], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _check_apt_package_installed(pkg: str) -> bool:
+    try:
+        result = subprocess.run(["dpkg", "-s", pkg], capture_output=True, timeout=10)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _check_cuda_available() -> bool:
+    return _check_command_exists("nvcc") or _check_command_exists("nvidia-smi")
+
+
+def _check_vulkan_available() -> bool:
+    if _check_command_exists("vulkaninfo"):
+        return True
+    vulkan_icd = Path("/usr/share/vulkan/icd.d")
+    return vulkan_icd.exists() and any(vulkan_icd.iterdir())
+
+
+def _check_rocm_available() -> bool:
+    for cmd in ["rocm-smi", "rocminfo", "hipconfig"]:
+        if _check_command_exists(cmd):
+            return True
+    rocm_path = Path("/opt/rocm")
+    return rocm_path.exists()
+
+
+def _detect_gpu_arch(backend: str) -> Optional[str]:
+    if backend == "cuda":
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                caps = result.stdout.decode().strip().split("\n")
+                archs = set()
+                for cap in caps:
+                    cap = cap.strip().replace(".", "")
+                    if cap.isdigit() and len(cap) >= 2:
+                        archs.add(cap[:3])
+                if archs:
+                    return ";".join(sorted(archs))
+        except Exception:
+            pass
+        return None
+
+    if backend == "rocm":
+        try:
+            result = subprocess.run(["rocminfo"], capture_output=True, timeout=10)
+            if result.returncode == 0:
+                archs = set()
+                for line in result.stdout.decode().split("\n"):
+                    line = line.strip()
+                    if line.startswith("Name:") and "gfx" in line:
+                        archs.add(line.split(":")[1].strip())
+                if archs:
+                    return ";".join(sorted(archs))
+        except Exception:
+            pass
+        return LINUX_AMDGPU_TARGETS
+
+    return None
+
+
+def _check_build_prerequisites(backend: str) -> List[str]:
+    missing: List[str] = []
+    os_name = sys.platform
+
+    if os_name == "darwin":
+        if not _check_command_exists("cmake"):
+            missing.append("cmake (install via: brew install cmake)")
+        if backend != "metal" and backend != "cpu":
+            missing.append(f"Backend '{backend}' not supported on macOS")
+        return missing
+
+    if not _check_command_exists("cmake"):
+        missing.append("cmake (install via: sudo apt install cmake)")
+
+    if (
+        not _check_command_exists("g++")
+        and not _check_command_exists("cc1plus")
+        and not _check_command_exists("c++")
+    ):
+        missing.append("g++ (install via: sudo apt install build-essential)")
+
+    if not _check_command_exists("git"):
+        missing.append("git (install via: sudo apt install git)")
+
+    if backend == "cuda":
+        if not _check_cuda_available():
+            missing.append(
+                "NVIDIA CUDA Toolkit not found. Install via:\n"
+                "  sudo apt install nvidia-cuda-toolkit\n"
+                "  Or download from: https://developer.nvidia.com/cuda-downloads"
+            )
+
+    elif backend == "vulkan":
+        for pkg in ["libvulkan-dev", "libspirv-dev", "glslang-tools", "shaderc", "pkg-config"]:
+            if not _check_apt_package_installed(pkg):
+                missing.append(f"{pkg} (install via: sudo apt install {pkg})")
+
+    elif backend == "rocm":
+        if not _check_rocm_available():
+            missing.append(
+                "AMD ROCm not found. Install from:\n"
+                "  https://rocm.docs.amd.com/projects/install-on-linux/en/latest/\n"
+                "  Or: sudo amdgpu-install --usecase=rocm"
+            )
+
+    elif backend == "sycl" and not _check_command_exists("icx"):
+        missing.append(
+            "Intel oneAPI not found. Install from:\n"
+            "  https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html\n"
+            "  Then: source /opt/intel/oneapi/setvars.sh"
+        )
+
+    return missing
+
+
+def _get_install_hint(backend: str) -> str:
+    os_name = sys.platform
+
+    if os_name == "darwin":
+        return "brew install cmake git"
+
+    if backend == "cpu":
+        return "sudo apt install build-essential cmake git libssl-dev"
+
+    if backend == "cuda":
+        return (
+            "sudo apt install build-essential cmake git libssl-dev\n"
+            "# Then install CUDA Toolkit:\n"
+            "sudo apt install nvidia-cuda-toolkit\n"
+            "# OR download from: https://developer.nvidia.com/cuda-downloads"
+        )
+
+    if backend == "vulkan":
+        return (
+            "sudo apt install build-essential cmake git libssl-dev \\\n"
+            "  libvulkan-dev libspirv-dev glslang-tools shaderc pkg-config"
+        )
+
+    if backend == "rocm":
+        return (
+            "sudo apt install build-essential cmake git libssl-dev\n"
+            "# Then install ROCm:\n"
+            "sudo amdgpu-install --usecase=rocm\n"
+            "# OR download from: https://rocm.docs.amd.com/projects/install-on-linux/en/latest/"
+        )
+
+    if backend == "sycl":
+        return (
+            "sudo apt install build-essential cmake git libssl-dev\n"
+            "# Then install Intel oneAPI Base Toolkit:\n"
+            "# https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html\n"
+            "source /opt/intel/oneapi/setvars.sh"
+        )
+
+    return "sudo apt install build-essential cmake git libssl-dev"
+
+
+def _build_cmake_args(
+    build_dir: Path,
+    backend: str,
+    gpu_arch: Optional[str] = None,
+) -> List[str]:
+    args = [
+        "cmake",
+        "-B",
+        str(build_dir),
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_SHARED_LIBS=OFF",
+        "-DGGML_NATIVE=OFF",
+    ]
+
+    args.extend(BACKEND_CMAKE_FLAGS.get(backend, []))
+
+    if backend == "rocm":
+        arch = gpu_arch or LINUX_AMDGPU_TARGETS
+        args.append(f"-DAMDGPU_TARGETS={arch}")
+        rocm_path = Path("/opt/rocm")
+        if rocm_path.exists():
+            args.append(f"-DCMAKE_PREFIX_PATH={rocm_path}")
+        hipconfig = shutil.which("hipconfig")
+        if hipconfig:
+            hip_path = subprocess.run([hipconfig, "-R"], capture_output=True, text=True, timeout=10)
+            if hip_path.returncode == 0:
+                hip_dir = hip_path.stdout.strip()
+                if hip_dir:
+                    args.append(f"-DHIP_PATH={hip_dir}")
+
+    if backend == "cuda" and gpu_arch:
+        args.append(f"-DCMAKE_CUDA_ARCHITECTURES={gpu_arch.replace(';', ';')}")
+
+    return args
+
+
+def _copy_build_outputs(build_dir: Path, output_dir: Path, backend: str) -> List[str]:
+    copied: List[str] = []
+    bin_dir = build_dir / "bin"
+
+    if bin_dir.exists():
+        for exe in bin_dir.iterdir():
+            if exe.is_file():
+                name = exe.name
+                is_binary = any(name.startswith(b) for b in ESSENTIAL_BINARIES_BUILD)
+                is_binary = is_binary or name.startswith("llama-")
+                is_binary = is_binary and not name.endswith((".txt", ".md", ".json"))
+                if is_binary or name == "main":
+                    shutil.copy2(exe, output_dir / name)
+                    os.chmod(output_dir / name, 0o755)
+                    copied.append(name)
+
+    share_libs: List[Path] = []
+    if backend in ("cuda", "rocm") and sys.platform == "linux":
+        share_libs = list(build_dir.glob("*.so*")) + list(build_dir.glob("lib/*.so*"))
+    elif backend == "vulkan" and sys.platform == "linux":
+        share_libs = list(build_dir.glob("*.so*"))
+    elif sys.platform == "darwin":
+        share_libs = list(build_dir.glob("*.dylib"))
+    elif sys.platform == "win32":
+        share_libs = list(build_dir.glob("*.dll"))
+
+    for lib in share_libs:
+        if lib.is_file():
+            shutil.copy2(lib, output_dir / lib.name)
+            copied.append(lib.name)
+
+    return sorted(set(copied))
+
 
 def build_binary(
     backend: str = typer.Option(
-        "vulkan", "-b", "--backend", help="GPU backend (vulkan, cuda, rocm, cpu)"
+        "auto", "-b", "--backend", help="GPU backend: cpu, cuda, vulkan, rocm, metal, sycl"
     ),
-    jobs: int = typer.Option(8, "-j", "--jobs", help="Parallel jobs"),
+    jobs: int = typer.Option(
+        lambda: os.cpu_count() or 8, "-j", "--jobs", help="Parallel build jobs"
+    ),
     output: Optional[Path] = _OPT_OUTPUT_BIN,
     repo: Optional[str] = typer.Option(
         None, "--repo", help="llama.cpp repo URL (default: official)"
     ),
     branch: Optional[str] = typer.Option(None, "--branch", help="llama.cpp branch or tag"),
+    skip_checks: bool = typer.Option(False, "--skip-checks", help="Skip dependency checks"),
 ):
     """Build llama.cpp binaries from source.
 
-    Clones llama.cpp automatically if not present. Supports all GPU backends.
-    Uses the official llama.cpp repo by default.
+    Automatically detects GPU backend if not specified. Checks build
+    dependencies and provides installation hints for each backend.
+
+    Each backend requires different system packages:
+
+    \b
+    CPU:
+        sudo apt install build-essential cmake git libssl-dev
+
+    \b
+    CUDA (NVIDIA GPU):
+        sudo apt install build-essential cmake git libssl-dev nvidia-cuda-toolkit
+
+    \b
+    Vulkan (cross-vendor GPU):
+        sudo apt install build-essential cmake git libssl-dev \\
+            libvulkan-dev libspirv-dev glslang-tools shaderc pkg-config
+
+    \b
+    ROCm (AMD GPU):
+        sudo apt install build-essential cmake git libssl-dev
+        # Plus AMD ROCm from https://rocm.docs.amd.com
+
+    \b
+    Metal (macOS, enabled by default):
+        brew install cmake git
 
     Examples:
-        moxing build -b rocm -j 16                      # Build for ROCm
-        moxing build -b vulkan                           # Build for Vulkan
-        moxing build -b cuda                             # Build for CUDA
+        moxing build                          # Auto-detect backend
+        moxing build -b cuda                 # Build for CUDA
+        moxing build -b vulkan               # Build for Vulkan
+        moxing build -b rocm -j 16           # Build for ROCm with 16 jobs
+        moxing build -b cuda -o ./bins       # Build and copy to output dir
+        moxing build --skip-checks -b cpu   # Skip dependency checks
     """
-    console.print(f"[blue]Building llama.cpp with {backend} backend...[/blue]")
+    if backend == "auto":
+        if sys.platform == "darwin":
+            backend = "metal"
+        elif _check_cuda_available():
+            backend = "cuda"
+        elif _check_rocm_available():
+            backend = "rocm"
+        elif _check_vulkan_available():
+            backend = "vulkan"
+        else:
+            backend = "cpu"
+        console.print(f"[blue]Auto-detected backend: {backend}[/blue]")
+
+    if backend == "metal" and sys.platform != "darwin":
+        console.print("[red]Metal backend is only available on macOS[/red]")
+        raise typer.Exit(1)
+
+    if backend in BACKEND_DEPENDENCIES:
+        dep_info = BACKEND_DEPENDENCIES[backend]
+        console.print(f"\n[bold]Building for {dep_info['description']} ({backend})[/bold]\n")
+
+    if not skip_checks:
+        missing = _check_build_prerequisites(backend)
+        if missing:
+            console.print("[red]Missing build dependencies:[/red]\n")
+            for m in missing:
+                console.print(f"  [red]✗[/red] {m}")
+            console.print("\n[yellow]Install with:[/yellow]")
+            console.print(f"  {_get_install_hint(backend)}")
+            console.print("\n[dim]Use --skip-checks to bypass dependency checks[/dim]")
+            raise typer.Exit(1)
+        else:
+            console.print("[green]✓ All build dependencies found[/green]")
+
+    gpu_arch = _detect_gpu_arch(backend)
+    if gpu_arch and backend in ("cuda", "rocm"):
+        console.print(f"[dim]Detected GPU architectures: {gpu_arch}[/dim]")
 
     llama_cpp_dir = Path(__file__).parent.parent.parent / "llama.cpp"
 
@@ -49,47 +439,71 @@ def build_binary(
         clone_cmd.extend([clone_url, str(llama_cpp_dir)])
         subprocess.run(clone_cmd, check=True)
         console.print("[green]llama.cpp cloned successfully[/green]")
+    else:
+        console.print(f"[dim]Using existing source: {llama_cpp_dir}[/dim]")
 
     build_dir = llama_cpp_dir / "build"
+    cmake_args = _build_cmake_args(build_dir, backend, gpu_arch)
 
-    cmake_args = [
-        "cmake",
-        "-B",
-        str(build_dir),
-        "-DCMAKE_BUILD_TYPE=Release",
-        "-DBUILD_SHARED_LIBS=OFF",
-        "-DGGML_NATIVE=OFF",
-    ]
+    console.print(f"\n[bold]CMake configure ({backend}):[/bold]")
+    for arg in cmake_args[2:]:
+        console.print(f"  [dim]{arg}[/dim]")
+    console.print()
 
-    if backend == "vulkan":
-        cmake_args.append("-DGGML_VULKAN=ON")
-    elif backend == "cuda":
-        cmake_args.append("-DGGML_CUDA=ON")
-    elif backend == "rocm":
-        cmake_args.append("-DGGML_HIP=ON")
-        cmake_args.append("-DAMDGPU_TARGETS=gfx1100;gfx1030;gfx900")
-    elif backend == "metal":
-        cmake_args.append("-DGGML_METAL=ON")
+    result = subprocess.run(cmake_args, cwd=llama_cpp_dir)
+    if result.returncode != 0:
+        if backend == "cuda":
+            console.print("\n[yellow]CUDA build failed. Common fixes:[/yellow]")
+            console.print("  1. Install CUDA Toolkit: sudo apt install nvidia-cuda-toolkit")
+            console.print("  2. Or download from: https://developer.nvidia.com/cuda-downloads")
+            console.print("  3. Ensure nvcc is in PATH: which nvcc")
+        elif backend == "vulkan":
+            console.print("\n[yellow]Vulkan build failed. Common fixes:[/yellow]")
+            console.print(
+                "  sudo apt install libvulkan-dev libspirv-dev glslang-tools shaderc pkg-config"
+            )
+        elif backend == "rocm":
+            console.print("\n[yellow]ROCm build failed. Common fixes:[/yellow]")
+            console.print(
+                "  1. Install ROCm: https://rocm.docs.amd.com/projects/install-on-linux/en/latest/"
+            )
+            console.print("  2. Ensure hipconfig is in PATH: which hipconfig")
+            console.print("  3. Try specifying GPU arch: moxing build -b rocm")
+        raise typer.Exit(1)
 
-    console.print(f"[dim]Running: {' '.join(cmake_args)}[/dim]")
-    subprocess.run(cmake_args, cwd=llama_cpp_dir, check=True)
+    actual_jobs = jobs if isinstance(jobs, int) else (os.cpu_count() or 8)
+    build_cmd = ["cmake", "--build", str(build_dir), "-j", str(actual_jobs)]
 
-    build_cmd = ["cmake", "--build", str(build_dir), "-j", str(jobs)]
-    console.print(f"[dim]Building with {jobs} jobs...[/dim]")
-    subprocess.run(build_cmd, cwd=llama_cpp_dir, check=True)
+    console.print(f"\n[bold]Building with {actual_jobs} jobs...[/bold]")
+    result = subprocess.run(build_cmd, cwd=llama_cpp_dir)
+    if result.returncode != 0:
+        console.print("[red]Build failed[/red]")
+        raise typer.Exit(1)
+
+    console.print("\n[green bold]✓ Build complete![/green bold]")
+
+    bin_dir = build_dir / "bin"
+    if bin_dir.exists():
+        binaries = list(bin_dir.glob("llama-*"))
+        console.print(f"\n[bold]Built binaries ({len(binaries)}):[/bold]")
+        for b in sorted(binaries):
+            size_mb = b.stat().st_size / (1024 * 1024)
+            console.print(f"  [green]✓[/green] {b.name} ({size_mb:.1f} MB)")
 
     if output:
         output.mkdir(parents=True, exist_ok=True)
-        bin_dir = build_dir / "bin"
-        if bin_dir.exists():
-            for exe in bin_dir.glob("llama-*.exe" if sys.platform == "win32" else "llama-*"):
-                shutil.copy2(exe, output / exe.name)
-        if sys.platform != "win32":
-            for lib in build_dir.glob("*.so*"):
-                shutil.copy2(lib, output / lib.name)
-        console.print(f"[green]Binaries copied to: {output}[/green]")
+        copied = _copy_build_outputs(build_dir, output, backend)
+        if copied:
+            console.print(f"\n[green]Copied {len(copied)} files to: {output}[/green]")
+            for name in copied:
+                console.print(f"  [dim]{name}[/dim]")
+        else:
+            console.print("[yellow]No binaries found to copy[/yellow]")
     else:
-        console.print(f"[green]Build complete! Binaries at: {build_dir / 'bin'}[/green]")
+        console.print(f"\n[dim]Binaries at: {bin_dir}[/dim]")
+
+    console.print("\n[dim]To install into MoXing cache, copy binaries to:[/dim]")
+    console.print("[dim]  ~/.cache/moxing/binaries/[/dim]")
 
 
 def download_binaries(
