@@ -29,7 +29,7 @@ Quick start:
     tq = TurboQuant(TurboQuantConfig(bits_per_channel=3.5))
 """
 
-__version__ = "0.1.36"
+__version__ = "0.1.38"
 
 from moxing.binaries import (
     BinaryManager,
