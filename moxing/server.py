@@ -109,6 +109,12 @@ def _find_binary(backend: str = "auto") -> Path:
     """Find llama-server binary using BinaryManager."""
     from moxing.binaries import get_binary_manager
 
+    if backend == "rocm" and sys.platform == "win32":
+        raise FileNotFoundError(
+            "ROCm backend is not available on Windows. AMD GPUs on Windows "
+            "must use the Vulkan backend instead. Try: -b vulkan"
+        )
+
     manager = get_binary_manager(backend)
     if not manager.has_binaries():
         console.print(f"[blue]Downloading llama.cpp binaries for {manager.backend}...[/blue]")
@@ -166,6 +172,8 @@ class LlamaServer:
         kv_unified: bool = True,
         cache_reuse: int = 0,
         tune_config: Optional[Dict[str, Any]] = None,
+        mmproj: Optional[str] = None,
+        flash_attn: Optional[str] = None,
         **kwargs,
     ):
         model_path = Path(model)
@@ -202,6 +210,9 @@ class LlamaServer:
         self.cache_reuse = cache_reuse
         self.tune_config = tune_config
         self.extra_args = kwargs
+
+        self.mmproj = mmproj
+        self.flash_attn = flash_attn
 
         self.speculative_draft = speculative_draft
         self.speculative_type = speculative_type
@@ -494,9 +505,6 @@ class LlamaServer:
         if self.cache_reuse > 0:
             args.extend(["--cache-reuse", str(self.cache_reuse)])
 
-        kv_cache_args = self._get_kv_cache_args()
-        args.extend(kv_cache_args)
-
         if self.speculative_draft:
             if self.speculative_type:
                 args.extend(["--spec-type", self.speculative_type])
@@ -551,6 +559,29 @@ class LlamaServer:
             args.extend(["--mirostat-tau", str(self.mirostat_tau)])
             args.extend(["--mirostat-eta", str(self.mirostat_eta)])
 
+        if self.mmproj:
+            mmproj_path = Path(self.mmproj)
+            if mmproj_path.exists():
+                args.extend(["--mmproj", str(mmproj_path.resolve())])
+            else:
+                console.print(f"[yellow]Warning: mmproj file not found: {self.mmproj}[/yellow]")
+
+        flash_attn_disabled = self.flash_attn is not None and self.flash_attn in (
+            "0",
+            "off",
+            "false",
+        )
+
+        kv_args = self._get_kv_cache_args()
+        args.extend(kv_args)
+
+        if flash_attn_disabled:
+            args.extend(["--flash-attn", "off"])
+        elif self.flash_attn is not None:
+            args.extend(["--flash-attn", str(self.flash_attn)])
+        else:
+            args.extend(["--flash-attn", "on"])
+
         for key, value in self.extra_args.items():
             key = key.replace("_", "-")
             if isinstance(value, bool):
@@ -583,6 +614,26 @@ class LlamaServer:
             "tq2.5": "q4_0",
             "tq2": "q4_0",
         }
+
+        flash_attn_disabled = self.flash_attn is not None and self.flash_attn in (
+            "0",
+            "off",
+            "false",
+        )
+
+        if flash_attn_disabled and self.kv_cache_quant not in ("f16", "f32", "auto"):
+            console.print(
+                "[yellow]KV cache quantization requires flash-attn; "
+                "falling back to f16 since flash-attn is disabled[/yellow]"
+            )
+            args.extend(["-ctk", "f16"])
+            args.extend(["-ctv", "f16"])
+            return args
+
+        if flash_attn_disabled and self.kv_cache_quant == "auto":
+            args.extend(["-ctk", "f16"])
+            args.extend(["-ctv", "f16"])
+            return args
 
         if self.kv_cache_quant == "auto":
             from moxing.device import DeviceDetector, estimate_model_size_gb
@@ -635,6 +686,40 @@ class LlamaServer:
             args.extend(["-ctv", cache_type])
 
         return args
+
+    def _warn_known_backend_bugs(self) -> None:
+        """Warn about known llama.cpp backend/model bugs that produce garbled output."""
+        if self.quiet:
+            return
+        try:
+            from pathlib import Path
+
+            from moxing.gguf_check import diagnose_gguf
+
+            model_path = Path(str(self.model))
+            if not model_path.exists():
+                return
+            try:
+                meta = diagnose_gguf(model_path)
+            except Exception:
+                return
+
+            is_gpu_offload = self.n_gpu_layers != 0 and self.cpu_offload_layers == 0
+
+            if meta.architecture == "gemma4" and self.gpu_backend == "vulkan" and is_gpu_offload:
+                console.print(
+                    "[bold yellow]Warning:[/bold yellow] Gemma 4 on Vulkan with GPU offload "
+                    "may produce garbled output (<unused49> tokens). "
+                    "This is a known llama.cpp Vulkan backend bug (issue #24311)."
+                )
+                console.print(
+                    "[yellow]Workarounds:[/yellow] "
+                    "(1) use CUDA backend on NVIDIA (-b cuda), "
+                    "(2) use CPU-only with -ngl 0, "
+                    "(3) wait for llama.cpp upstream fix."
+                )
+        except Exception as e:
+            logger.debug("Known-bug warning check failed: %s", e, exc_info=True)
 
     def _cleanup_old_processes(self):
         """Kill processes using the target GPU device to free memory."""
@@ -731,6 +816,8 @@ class LlamaServer:
             raise RuntimeError("Server is already running")
 
         self._cleanup_old_processes()
+
+        self._warn_known_backend_bugs()
 
         binary_path = self._get_binary_for_backend()
 
@@ -889,13 +976,14 @@ class LlamaServer:
     def _wait_for_server(self, timeout: int = 120):
         """Wait for server to be ready."""
         start = time.time()
+        client = httpx.Client(verify=False, timeout=5, follow_redirects=True)
 
         while time.time() - start < timeout:
             try:
-                resp = httpx.get(f"{self._base_url}/health", timeout=5, follow_redirects=True)
+                resp = client.get(f"{self._base_url}/health")
                 if resp.status_code == 200:
                     try:
-                        props = httpx.get(f"{self._base_url}/props", timeout=5)
+                        props = client.get(f"{self._base_url}/props")
                         if props.status_code == 200:
                             data = props.json()
                             if data.get("total_slots", 0) > 0:
@@ -912,7 +1000,8 @@ class LlamaServer:
             except Exception as e:
                 logger.debug("Server health check failed: %s", e, exc_info=True)
                 if not self.quiet:
-                    console.print(f"[dim]Waiting for health... {e}[/dim]")
+                    short_msg = str(e).split(":")[0][:80]
+                    console.print(f"[dim]Waiting for health... {short_msg}[/dim]")
                 pass
 
             if self._process is not None and self._process.poll() is not None:

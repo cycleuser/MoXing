@@ -72,6 +72,7 @@ class GGUFParser:
         "gemma",
         "gemma2",
         "gemma3",
+        "gemma4",
         "phi3",
         "starcoder2",
         "mpt",
@@ -88,6 +89,7 @@ class GGUFParser:
         "gpt-j",
         "gpt-neox",
         "grok-1",
+        "gpt-oss",
         "jais",
         "llava",
         "minicpm",
@@ -112,6 +114,7 @@ class GGUFParser:
         "gemma": ["gemma.attention.layer_norm_rms_epsilon"],
         "gemma2": ["gemma2.attention.layer_norm_rms_epsilon"],
         "gemma3": ["gemma3.attention.layer_norm_rms_epsilon", "gemma3.attention.head_count"],
+        "gemma4": ["gemma4.attention.layer_norm_rms_epsilon"],
         "qwen2": ["qwen2.attention.layer_norm_rms_epsilon"],
         "qwen3": ["qwen3.attention.layer_norm_rms_epsilon"],
         "qwen35": ["qwen35.attention.layer_norm_rms_epsilon"],
@@ -161,6 +164,8 @@ class GGUFParser:
     def _read_string(self) -> str:
         length = self._read_uint64()
         assert self._fp is not None
+        if length > 10 * 1024 * 1024:
+            raise ValueError(f"String length too large ({length}), likely file position corruption")
         return self._fp.read(length).decode("utf-8", errors="replace")
 
     def _read_value(self) -> Any:
@@ -188,7 +193,7 @@ class GGUFParser:
         elif value_type == GGUF_TYPE_ARRAY:
             array_type = self._read_uint32()
             array_length = self._read_uint64()
-            return [self._read_value_by_type(array_type) for _ in range(array_length)]
+            return self._read_array(array_type, array_length)
         elif value_type == GGUF_TYPE_UINT64:
             return self._read_uint64()
         elif value_type == GGUF_TYPE_INT64:
@@ -198,17 +203,81 @@ class GGUFParser:
         else:
             return None
 
+    _ARRAY_SAMPLE_LIMIT = 1024
+    _ARRAY_SKIP_THRESHOLD = 10000
+
+    def _read_array(self, array_type: int, array_length: int) -> List[Any]:
+        assert self._fp is not None
+        if array_length <= self._ARRAY_SKIP_THRESHOLD:
+            return [self._read_value_by_type(array_type) for _ in range(array_length)]
+
+        sample: List[Any] = []
+        for _i in range(min(self._ARRAY_SAMPLE_LIMIT, array_length)):
+            sample.append(self._read_value_by_type(array_type))
+
+        remaining = array_length - len(sample)
+        if remaining > 0:
+            self._skip_array_elements(array_type, remaining)
+        return sample
+
+    def _skip_array_elements(self, array_type: int, count: int) -> None:
+        assert self._fp is not None
+        fixed_sizes = {
+            GGUF_TYPE_UINT8: 1,
+            GGUF_TYPE_INT8: 1,
+            GGUF_TYPE_UINT16: 2,
+            GGUF_TYPE_INT16: 2,
+            GGUF_TYPE_UINT32: 4,
+            GGUF_TYPE_INT32: 4,
+            GGUF_TYPE_FLOAT32: 4,
+            GGUF_TYPE_BOOL: 1,
+            GGUF_TYPE_UINT64: 8,
+            GGUF_TYPE_INT64: 8,
+            GGUF_TYPE_FLOAT64: 8,
+        }
+        if array_type in fixed_sizes:
+            self._fp.seek(fixed_sizes[array_type] * count, 1)
+            return
+        if array_type == GGUF_TYPE_STRING:
+            for _ in range(count):
+                length = self._read_uint64()
+                self._fp.seek(length, 1)
+            return
+        if array_type == GGUF_TYPE_ARRAY:
+            for _ in range(count):
+                self._read_uint32()
+                inner_type = self._read_uint32()
+                inner_len = self._read_uint64()
+                self._skip_array_elements(inner_type, inner_len)
+            return
+
     def _read_value_by_type(self, value_type: int) -> Any:
-        if value_type == GGUF_TYPE_UINT32:
+        if value_type == GGUF_TYPE_UINT8:
+            return struct.unpack("<B", self._fp.read(1))[0]
+        elif value_type == GGUF_TYPE_INT8:
+            return struct.unpack("<b", self._fp.read(1))[0]
+        elif value_type == GGUF_TYPE_UINT16:
+            return struct.unpack("<H", self._fp.read(2))[0]
+        elif value_type == GGUF_TYPE_INT16:
+            return struct.unpack("<h", self._fp.read(2))[0]
+        elif value_type == GGUF_TYPE_UINT32:
             return self._read_uint32()
         elif value_type == GGUF_TYPE_INT32:
             return self._read_int32()
         elif value_type == GGUF_TYPE_FLOAT32:
             return self._read_float32()
+        elif value_type == GGUF_TYPE_BOOL:
+            return struct.unpack("<?", self._fp.read(1))[0]
         elif value_type == GGUF_TYPE_STRING:
             return self._read_string()
+        elif value_type == GGUF_TYPE_UINT64:
+            return self._read_uint64()
+        elif value_type == GGUF_TYPE_INT64:
+            return struct.unpack("<q", self._fp.read(8))[0]
+        elif value_type == GGUF_TYPE_FLOAT64:
+            return struct.unpack("<d", self._fp.read(8))[0]
         else:
-            return self._read_value()
+            return None
 
     def _build_metadata(self, version: int) -> GGUFMetadata:
         arch = self._metadata.get("general.architecture", "unknown")

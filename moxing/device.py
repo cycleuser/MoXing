@@ -447,6 +447,7 @@ class DeviceDetector:
                                 memory_mb=memory,
                                 free_memory_mb=free_memory,
                                 vendor=vendor,
+                                backend_index=idx,
                             )
                         )
         except Exception as e:
@@ -583,6 +584,9 @@ class DeviceDetector:
 
         vulkan_detected = any(d.backend == BackendType.VULKAN for d in self._devices)
         if not vulkan_detected:
+            self._detect_vulkan_via_llama_server()
+
+        if not any(d.backend == BackendType.VULKAN for d in self._devices):
             try:
                 result = subprocess.run(
                     ["vulkaninfo", "--summary"],
@@ -644,6 +648,81 @@ class DeviceDetector:
 
         return self._devices
 
+    def _detect_vulkan_via_llama_server(self) -> None:
+        """Detect Vulkan devices using the llama-server vulkan binary.
+
+        This is preferred over vulkaninfo because it reports the same
+        Vulkan<idx> enumeration that llama-server uses for -dev argument,
+        so backend_index matches what users need to pass to -dev.
+        """
+        from moxing.binaries import BIN_DIR, PlatformDetector, get_binary_manager
+
+        platform_name = PlatformDetector.get_platform_name()
+        binary_name = "llama-server.exe" if sys.platform == "win32" else "llama-server"
+        vulkan_binary = None
+
+        bundled_dir = BIN_DIR / f"{platform_name}-vulkan"
+        if bundled_dir.exists():
+            bp = bundled_dir / binary_name
+            if bp.exists():
+                vulkan_binary = bp
+
+        if vulkan_binary is None:
+            try:
+                manager = get_binary_manager("vulkan")
+                if manager.has_binaries():
+                    vulkan_binary = manager.get_binary_path("llama-server")
+            except Exception as e:
+                logger.debug("Vulkan binary lookup failed: %s", e, exc_info=True)
+                return
+
+        if vulkan_binary is None or not vulkan_binary.exists():
+            return
+
+        try:
+            result = subprocess.run(
+                [str(vulkan_binary), "--list-devices"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+                cwd=str(vulkan_binary.parent),
+            )
+            output = result.stdout + result.stderr
+            for line in output.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                if ":" in line and "MiB" in line:
+                    match = re.match(
+                        r"(\w+)(\d+):\s*(.+?)\s*\((\d+)\s*MiB(?:,\s*(\d+)\s*MiB\s*free)?\)",
+                        line,
+                    )
+                    if match:
+                        backend_str = match.group(1).lower()
+                        if backend_str != "vulkan":
+                            continue
+                        idx = int(match.group(2))
+                        name = match.group(3).strip()
+                        memory = int(match.group(4))
+                        free_memory = int(match.group(5)) if match.group(5) else memory
+                        vendor = self._detect_vendor(name)
+                        exists = any(self._gpu_names_match(d.name, name) for d in self._devices)
+                        if not exists:
+                            self._devices.append(
+                                Device(
+                                    index=idx,
+                                    name=name,
+                                    backend=BackendType.VULKAN,
+                                    memory_mb=memory,
+                                    free_memory_mb=free_memory,
+                                    vendor=vendor,
+                                    backend_index=idx,
+                                )
+                            )
+        except Exception as e:
+            logger.debug("Vulkan detection via llama-server failed: %s", e, exc_info=True)
+
     def _supplement_gpu_memory_all_platforms(self) -> None:
         """Detect GPU memory via platform-specific methods for all GPUs.
 
@@ -656,8 +735,7 @@ class DeviceDetector:
         - macOS:   system_profiler SPDisplaysDataType
         """
         devices_to_supplement = [
-            d for d in self._devices
-            if d.backend != BackendType.CPU and d.memory_mb == 0
+            d for d in self._devices if d.backend != BackendType.CPU and d.memory_mb == 0
         ]
         if not devices_to_supplement:
             return
@@ -770,16 +848,17 @@ class DeviceDetector:
                             flag_line = lines[i].strip()
                             if "MEMORY_HEAP_DEVICE_LOCAL_BIT" in flag_line:
                                 is_local = True
-                            if flag_line.startswith("memoryHeaps[") or \
-                               flag_line.startswith("memoryTypes:") or \
-                               flag_line.startswith("==="):
+                            if (
+                                flag_line.startswith("memoryHeaps[")
+                                or flag_line.startswith("memoryTypes:")
+                                or flag_line.startswith("===")
+                            ):
                                 break
                             i += 1
                         heap_is_device_local.append(is_local)
                         continue
 
-                    if heap_line.startswith("memoryTypes:") or \
-                       heap_line.startswith("==="):
+                    if heap_line.startswith("memoryTypes:") or heap_line.startswith("==="):
                         break
                     i += 1
 
@@ -1005,7 +1084,9 @@ class DeviceDetector:
 
         if "radeon" in line_lower and ("radeon" in name_lower or "rx " in name_lower):
             return True
-        if "nvidia" in line_lower and ("nvidia" in name_lower or "tesla" in name_lower or "geforce" in name_lower):
+        if "nvidia" in line_lower and (
+            "nvidia" in name_lower or "tesla" in name_lower or "geforce" in name_lower
+        ):
             return True
         if "intel" in line_lower and "intel" in name_lower:
             return True
@@ -1097,8 +1178,8 @@ class DeviceDetector:
         if a == b:
             return True
 
-        a_clean = re.sub(r'[\s\(\)\/\-]+', '', a)
-        b_clean = re.sub(r'[\s\(\)\/\-]+', '', b)
+        a_clean = re.sub(r"[\s\(\)\/\-]+", "", a)
+        b_clean = re.sub(r"[\s\(\)\/\-]+", "", b)
         if a_clean == b_clean:
             return True
 
@@ -1107,8 +1188,8 @@ class DeviceDetector:
         if a_short == b_short:
             return True
 
-        rx_a = re.search(r'rx\s*(\d+)', a)
-        rx_b = re.search(r'rx\s*(\d+)', b)
+        rx_a = re.search(r"rx\s*(\d+)", a)
+        rx_b = re.search(r"rx\s*(\d+)", b)
         if rx_a and rx_b:
             if rx_a.group(1) == rx_b.group(1):
                 return True
@@ -1118,8 +1199,8 @@ class DeviceDetector:
 
         for keyword in ["tesla", "quadro", "geforce", "rtx", "gtx"]:
             if keyword in a and keyword in b:
-                model_a = re.search(r'(?:p\d+|\d{4})', a)
-                model_b = re.search(r'(?:p\d+|\d{4})', b)
+                model_a = re.search(r"(?:p\d+|\d{4})", a)
+                model_b = re.search(r"(?:p\d+|\d{4})", b)
                 if model_a and model_b and model_a.group() == model_b.group():
                     return True
 
@@ -1134,6 +1215,7 @@ class DeviceDetector:
         """Get total system RAM in MB."""
         try:
             import psutil
+
             return int(psutil.virtual_memory().total / (1024 * 1024))
         except Exception:
             pass
@@ -1151,6 +1233,7 @@ class DeviceDetector:
         """Get free system RAM in MB."""
         try:
             import psutil
+
             return int(psutil.virtual_memory().available / (1024 * 1024))
         except Exception:
             pass
@@ -1166,8 +1249,12 @@ class DeviceDetector:
         """Get total RAM on Windows via PowerShell."""
         try:
             result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "(Get-CimInstance Win32_PhysicalMemory | Measure-Object Capacity -Sum).Sum"],
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_PhysicalMemory | Measure-Object Capacity -Sum).Sum",
+                ],
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
@@ -1183,8 +1270,12 @@ class DeviceDetector:
         """Get free RAM on Windows via PowerShell."""
         try:
             result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory"],
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory",
+                ],
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
@@ -1320,8 +1411,32 @@ class DeviceDetector:
             ]
         ]
 
-        for devices in [cuda_devices, rocm_devices, metal_devices, vulkan_devices, other_devices]:
+        for devices in [cuda_devices, rocm_devices, metal_devices, other_devices]:
             devices.sort(key=lambda x: x.memory_mb, reverse=True)
+
+        # Vulkan devices: keep original backend_index order to avoid aperture
+        # memory reporting on iGPUs messing up ordering (e.g. 610M reports
+        # 32GB shared/aperture memory but only has 256MB real VRAM).
+        # Heuristic: discrete GPUs (Radeon RX, GeForce RTX/GTX, Arc) first by
+        # memory_mb, then iGPUs (Radeon(TM) Graphics, Iris, UHD) last.
+        def vulkan_sort_key(d: Device):
+            name_lower = d.name.lower()
+            is_igpu = (
+                "(tm)" in name_lower
+                or "iris" in name_lower
+                or "uhd" in name_lower
+                or "radeon(tm) graphics" in name_lower
+                or "radeon(tm) 610" in name_lower
+                or "radeon(tm) 680" in name_lower
+                or "radeon(tm) 700" in name_lower
+                or "integrated" in name_lower
+            )
+            # Prefer real VRAM over supplemented aperture: if backend_index is
+            # set and matches an nvidia-smi/amd-smi device, its memory_mb is
+            # real; otherwise (vulkaninfo WMI fallback) cap heuristic.
+            return (0 if not is_igpu else 1, -d.memory_mb, d.backend_index)
+
+        vulkan_devices.sort(key=vulkan_sort_key)
 
         unique_devices = (
             cuda_devices + rocm_devices + metal_devices + vulkan_devices + other_devices
